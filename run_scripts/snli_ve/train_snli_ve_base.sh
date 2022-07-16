@@ -11,7 +11,7 @@ mkdir -p $log_dir $save_dir
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/snli_ve_data
+data_dir=/data/tsk/snli_ve/
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,2,3,4,5

@@ -8,7 +8,7 @@ user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
 
 # dev or test
-split=$1
+split=test
 
 data=../../dataset/snli_ve_data/snli_ve_${split}.tsv
 path=../../checkpoints/snli_ve_large_best.pt
