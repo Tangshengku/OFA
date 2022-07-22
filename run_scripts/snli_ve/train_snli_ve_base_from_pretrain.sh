@@ -13,15 +13,15 @@ user_dir=../../ofa_module
 
 data_dir=/data/tsk/snli_ve/
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
-restore_file=../../checkpoints/ofa_base.pt
+restore_file=../../checkpoints/ofa_base_svd_rank128.pt
 selected_cols=0,2,3,4,5
 
 task=snli_ve
-arch=ofa_base
+arch=ofa_base_decompose
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.0
 lr=3e-5
-max_epoch=15
+max_epoch=10
 warmup_ratio=0.06
 batch_size=4
 update_freq=8
@@ -36,7 +36,7 @@ num_bins=1000
 patch_image_size=480
 prompt_type="prev_output"
 
-for max_epoch in {15,}; do
+for max_epoch in {10,}; do
   echo "max_epoch "${max_epoch}
   for lr in {5e-5,}; do
     echo "lr "${lr}
@@ -45,7 +45,7 @@ for max_epoch in {15,}; do
     save_path=${save_dir}/${max_epoch}"_"${lr}
     mkdir -p $save_path
 
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=6 --master_port=${MASTER_PORT} ../../train.py \
+    CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=7 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \

@@ -192,7 +192,7 @@ def parse_args_and_arch(
     if hasattr(args, "max_tokens_valid") and args.max_tokens_valid is None:
         args.max_tokens_valid = args.max_tokens
     if getattr(args, "memory_efficient_fp16", False):
-        args.fp16 = True
+        args.fp16 = False
     if getattr(args, "memory_efficient_bf16", False):
         args.bf16 = True
     args.tpu = getattr(args, "tpu", False)

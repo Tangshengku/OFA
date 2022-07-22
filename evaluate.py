@@ -48,15 +48,15 @@ def main(cfg: DictConfig, **kwargs):
     if cfg.common.seed is not None and not cfg.generation.no_seed_provided:
         np.random.seed(cfg.common.seed)
         utils.set_torch_seed(cfg.common.seed)
-
+    cfg.common.fp16 = False
     use_fp16 = cfg.common.fp16
     use_cuda = torch.cuda.is_available() and not cfg.common.cpu
 
     if use_cuda:
         torch.cuda.set_device(cfg.distributed_training.device_id)
-
+    # overrides = {"data":"/data/tsk/snli_ve/snli_ve_test.tsv","bpe_dir":"./utils/BPE","selected_cols":"0,2,3,4,5"}
     # Load ensemble
-    overrides = eval(cfg.common_eval.model_overrides)
+    overrides =  eval(cfg.common_eval.model_overrides)
     # Deal with beam-search / all-candidate VQA eval
     if cfg.task._name == "vqa_gen":
         overrides['val_inference_type'] = "beamsearch" if kwargs['beam_search_vqa_eval'] else "allcand"
@@ -80,10 +80,13 @@ def main(cfg: DictConfig, **kwargs):
             strict=(cfg.checkpoint.checkpoint_shard_count == 1),
             num_shards=cfg.checkpoint.checkpoint_shard_count,
         )
+    # for model in models:
+    #     for name, parameters in model.named_parameters():
+    #         print(name,':',parameters.size())
 
     # loading the dataset should happen after the checkpoint has been loaded so we can give it the saved task config
     task.load_dataset(cfg.dataset.gen_subset, task_cfg=saved_cfg.task)
-
+    
     # Move models to GPU
     for model, ckpt_path in zip(models, utils.split_paths(cfg.common_eval.path)):
         if kwargs['ema_eval']:

@@ -14,6 +14,7 @@ from fairseq.modules.quant_noise import quant_noise
 from torch import Tensor
 
 from .unify_multihead_attention import MultiheadAttention
+from .factor_linear import FactorLinear
 
 
 def drop_path(x, drop_prob: float = 0.0, training: bool = False):
@@ -64,9 +65,11 @@ class TransformerEncoderLayer(nn.Module):
         args (argparse.Namespace): parsed command-line arguments
     """
 
-    def __init__(self, args, drop_path_rate=0.0):
+    def __init__(self, args, decomposition=False, orthogonal_size=128, drop_path_rate=0.0):
         super().__init__()
         self.args = args
+        self.decomposition = decomposition
+        self.orthogonal_size = orthogonal_size
         self.embed_dim = args.encoder_embed_dim
         self.quant_noise = getattr(args, 'quant_noise_pq', 0)
         self.quant_noise_block_size = getattr(args, 'quant_noise_pq_block_size', 8) or 8
@@ -86,13 +89,27 @@ class TransformerEncoderLayer(nn.Module):
             float(activation_dropout_p), module_name=self.__class__.__name__
         )
         self.normalize_before = args.encoder_normalize_before
-        self.fc1 = self.build_fc1(
+        if self.decomposition:
+            self.fc1 = self.build_fc1_decomposition(
             self.embed_dim,
             args.encoder_ffn_embed_dim,
             self.quant_noise,
             self.quant_noise_block_size,
-        )
-        self.fc2 = self.build_fc2(
+            self.orthogonal_size,)
+            self.fc2 = self.build_fc2_decomposition(
+                args.encoder_ffn_embed_dim,
+                self.embed_dim,
+                self.quant_noise,
+                self.quant_noise_block_size,
+                self.orthogonal_size,)
+        else:
+            self.fc1 = self.build_fc1(
+                self.embed_dim,
+                args.encoder_ffn_embed_dim,
+                self.quant_noise,
+                self.quant_noise_block_size,
+            )
+            self.fc2 = self.build_fc2(
             args.encoder_ffn_embed_dim,
             self.embed_dim,
             self.quant_noise,
@@ -114,12 +131,20 @@ class TransformerEncoderLayer(nn.Module):
         return quant_noise(
             nn.Linear(input_dim, output_dim), p=q_noise, block_size=qn_block_size
         )
+    def build_fc1_decomposition(self, input_dim, output_dim, q_noise, qn_block_size, orthogonal_size):
+        return quant_noise(
+            FactorLinear(input_dim, orthogonal_size, output_dim, bias=True), p=q_noise, block_size=qn_block_size
+        )
 
     def build_fc2(self, input_dim, output_dim, q_noise, qn_block_size):
         return quant_noise(
             nn.Linear(input_dim, output_dim), p=q_noise, block_size=qn_block_size
         )
 
+    def build_fc2_decomposition(self, input_dim, output_dim, q_noise, qn_block_size, orthogonal_size):
+        return quant_noise(
+            FactorLinear(input_dim, orthogonal_size, output_dim, True), p=q_noise, block_size=qn_block_size
+        )
     def build_self_attention(self, embed_dim, args):
         return MultiheadAttention(
             embed_dim,
@@ -129,9 +154,15 @@ class TransformerEncoderLayer(nn.Module):
             q_noise=self.quant_noise,
             qn_block_size=self.quant_noise_block_size,
             scale_factor=args.attn_scale_factor,
-            scale_heads=getattr(args, 'scale_heads', False)
+            scale_heads=getattr(args, 'scale_heads', False),
+            decomposition=self.decomposition,
+            orthogonal_size=self.orthogonal_size
         )
 
+    def set_decompose_parameters_from_pretrain(self, weight):
+        self.self_attn.set_decompose_parameters_from_pretrain(weight)
+        return
+    
     def residual_connection(self, x, residual):
         return residual + self.drop_path(x)
 
@@ -245,9 +276,11 @@ class TransformerDecoderLayer(nn.Module):
     """
 
     def __init__(
-        self, args, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False, drop_path_rate=0.0
+        self, args, decomposition=False, orthogonal_size=128, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False, drop_path_rate=0.0
     ):
         super().__init__()
+        self.decomposition = decomposition
+        self.orthogonal_size = orthogonal_size
         self.embed_dim = args.decoder_embed_dim
         self.dropout_module = FairseqDropout(
             args.dropout, module_name=self.__class__.__name__
@@ -298,18 +331,33 @@ class TransformerDecoderLayer(nn.Module):
         self.ffn_layernorm = LayerNorm(args.decoder_ffn_embed_dim) if getattr(args, 'scale_fc', False) else None
         self.w_resid = nn.Parameter(torch.ones(self.embed_dim, ), requires_grad=True) if getattr(args, 'scale_resids', False) else None
 
-        self.fc1 = self.build_fc1(
+        if self.decomposition:
+            self.fc1 = self.build_fc1_decomposition(
             self.embed_dim,
-            args.decoder_ffn_embed_dim,
+            args.encoder_ffn_embed_dim,
+            self.quant_noise,
+            self.quant_noise_block_size,
+            self.orthogonal_size,)
+            self.fc2 = self.build_fc2_decomposition(
+                args.encoder_ffn_embed_dim,
+                self.embed_dim,
+                self.quant_noise,
+                self.quant_noise_block_size,
+                self.orthogonal_size,)
+        else:
+            self.fc1 = self.build_fc1(
+                self.embed_dim,
+                args.encoder_ffn_embed_dim,
+                self.quant_noise,
+                self.quant_noise_block_size,
+            )
+            self.fc2 = self.build_fc2(
+            args.encoder_ffn_embed_dim,
+            self.embed_dim,
             self.quant_noise,
             self.quant_noise_block_size,
         )
-        self.fc2 = self.build_fc2(
-            args.decoder_ffn_embed_dim,
-            self.embed_dim,
-            self.quant_noise,
-            self.quant_noise_block_size,
-        )
+
 
         self.final_layer_norm = LayerNorm(self.embed_dim, export=export)
         self.need_attn = True
@@ -320,10 +368,18 @@ class TransformerDecoderLayer(nn.Module):
 
     def build_fc1(self, input_dim, output_dim, q_noise, qn_block_size):
         return quant_noise(nn.Linear(input_dim, output_dim), q_noise, qn_block_size)
+    def build_fc1_decomposition(self, input_dim, output_dim, q_noise, qn_block_size, orthogonal_size):
+        return quant_noise(
+            FactorLinear(input_dim, orthogonal_size, output_dim, bias=True), p=q_noise, block_size=qn_block_size
+        )
 
     def build_fc2(self, input_dim, output_dim, q_noise, qn_block_size):
         return quant_noise(nn.Linear(input_dim, output_dim), q_noise, qn_block_size)
-
+    def build_fc2_decomposition(self, input_dim, output_dim, q_noise, qn_block_size, orthogonal_size):
+        return quant_noise(
+            FactorLinear(input_dim, orthogonal_size, output_dim, True), p=q_noise, block_size=qn_block_size
+        )
+ 
     def build_self_attention(
         self, embed_dim, args, add_bias_kv=False, add_zero_attn=False
     ):
@@ -337,7 +393,9 @@ class TransformerDecoderLayer(nn.Module):
             q_noise=self.quant_noise,
             qn_block_size=self.quant_noise_block_size,
             scale_factor=args.attn_scale_factor,
-            scale_heads=getattr(args, 'scale_heads', False)
+            scale_heads=getattr(args, 'scale_heads', False),
+            decomposition=self.decomposition,
+            orthogonal_size=self.orthogonal_size
         )
 
     def build_encoder_attention(self, embed_dim, args):
@@ -349,6 +407,7 @@ class TransformerDecoderLayer(nn.Module):
             dropout=args.attention_dropout,
             encoder_decoder_attention=True,
             q_noise=self.quant_noise,
+            decomposition=self.decomposition,
             qn_block_size=self.quant_noise_block_size,
             scale_factor=args.attn_scale_factor,
             scale_heads=getattr(args, 'scale_heads', False)

@@ -14,6 +14,7 @@ from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
 from torch import Tensor, nn
 from torch.nn import Parameter
+from .factor_linear import FactorLinear
 
 
 @with_incremental_state
@@ -38,10 +39,14 @@ class MultiheadAttention(nn.Module):
         q_noise=0.0,
         qn_block_size=8,
         scale_factor=2,
-        scale_heads=False
+        scale_heads=False,
+        decomposition=False,
+        orthogonal_size=128
     ):
         super().__init__()
         self.embed_dim = embed_dim
+        self.decomposition = decomposition
+        self.orthogonal_size = orthogonal_size
         self.kdim = kdim if kdim is not None else embed_dim
         self.vdim = vdim if vdim is not None else embed_dim
         self.qkv_same_dim = self.kdim == embed_dim and self.vdim == embed_dim
@@ -64,20 +69,33 @@ class MultiheadAttention(nn.Module):
         assert not self.self_attention or self.qkv_same_dim, (
             "Self-attention requires query, key and " "value to be of the same size"
         )
+        if self.decomposition:
+            self.k_proj = quant_noise(
+                FactorLinear(self.kdim, self.orthogonal_size, embed_dim, bias), q_noise, qn_block_size
+            )
+            self.q_proj = quant_noise(
+                FactorLinear(embed_dim, self.orthogonal_size, embed_dim, bias), q_noise, qn_block_size
+            )
+            self.v_proj = quant_noise(
+                FactorLinear(self.vdim, self.orthogonal_size, embed_dim, bias), q_noise, qn_block_size
+            )
+            self.out_proj = quant_noise(
+                FactorLinear(embed_dim, self.orthogonal_size, embed_dim, bias), q_noise, qn_block_size
+            )
+        else:
+            self.k_proj = quant_noise(
+                nn.Linear(self.kdim, embed_dim, bias=bias), q_noise, qn_block_size
+            )
+            self.v_proj = quant_noise(
+                nn.Linear(self.vdim, embed_dim, bias=bias), q_noise, qn_block_size
+            )
+            self.q_proj = quant_noise(
+                nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
+            )
 
-        self.k_proj = quant_noise(
-            nn.Linear(self.kdim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
-        self.v_proj = quant_noise(
-            nn.Linear(self.vdim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
-        self.q_proj = quant_noise(
-            nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
-
-        self.out_proj = quant_noise(
-            nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
+            self.out_proj = quant_noise(
+                nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
+            )
 
         if add_bias_kv:
             self.bias_k = Parameter(torch.Tensor(1, 1, embed_dim))
@@ -87,7 +105,7 @@ class MultiheadAttention(nn.Module):
 
         self.add_zero_attn = add_zero_attn
 
-        self.reset_parameters()
+        # self.reset_parameters()
 
         self.onnx_trace = False
 
@@ -114,6 +132,9 @@ class MultiheadAttention(nn.Module):
         if self.bias_v is not None:
             nn.init.xavier_normal_(self.bias_v)
 
+    def set_decompose_parameters_from_pretrain(self, att_weight):
+        return
+    
     def forward(
         self,
         query,

@@ -8,10 +8,10 @@ user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
 
 # val or test
-split=$1
+split=test
 
-data=../../dataset/vqa_data/vqa_${split}.tsv
-ans2label_file=../../dataset/vqa_data/trainval_ans2label.pkl
+data=/data/tsk/vqa_data/vqa_${split}.tsv
+ans2label_file=/data/tsk/vqa_data/trainval_ans2label.pkl
 path=../../checkpoints/vqa_base_best.pt
 result_path=../../results/vqa_${split}_beam
 selected_cols=0,5,2,3,4

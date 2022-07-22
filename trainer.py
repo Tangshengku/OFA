@@ -511,6 +511,10 @@ class Trainer(object):
                     self.model.load_state_dict(
                         state["model"], strict=True, model_cfg=self.cfg.model
                     )
+                    # new = checkpoint_utils.load_svd_from_checkpoint(state["model"])
+                    # state["model"] =  new
+                    # checkpoint_utils.torch_persistent_save(state, "../../checkpoints/ofa_base_svd_rank128.pt")
+                    
                 # save memory for later steps
                 if not (self.cfg.ema.store_ema and (self.cfg.checkpoint.use_latest_weights_to_init_ema or not ("extra_state" in state and "ema" in state["extra_state"]))):
                     del state["model"]

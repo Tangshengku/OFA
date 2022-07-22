@@ -397,6 +397,11 @@ def ofa_base_architecture(args):
     args.resnet_type = getattr(args, "resnet_type", "resnet101")
     ofa_large_architecture(args)
 
+@register_model_architecture("ofa", "ofa_base_decompose")
+def ofa_base_architecture_decompose(args):
+    args.decomposition = getattr(args, "decomposition", True)
+    args.orthogonal_size = getattr(args, "orthonogal_size", 128)
+    ofa_base_architecture(args)
 
 @register_model_architecture("ofa", "ofa_huge")
 def ofa_huge_architecture(args):

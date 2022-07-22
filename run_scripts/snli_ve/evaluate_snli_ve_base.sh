@@ -12,6 +12,7 @@ split=test
 
 data=/data/tsk/snli_ve/snli_ve_${split}.tsv
 path=../../checkpoints/snli_ve_base_best.pt
+# path=./checkpoints/{10,}_{5e-5,}/checkpoint.best_snli_score_0.8680.pt
 result_path=../../results/snli_ve
 selected_cols=0,2,3,4,5
 

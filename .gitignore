@@ -1,2 +1,7 @@
 .idea/*
 .DS_Store
+checkpoints/
+.vscode/
+__pycache__/
+results/
+logs/

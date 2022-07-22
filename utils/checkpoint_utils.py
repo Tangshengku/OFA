@@ -15,8 +15,10 @@ import traceback
 import math
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Union
+from regex import F
 
 import torch
+import torch.nn as nn
 from fairseq.dataclass.configs import CheckpointConfig
 from fairseq.dataclass.utils import (
     convert_namespace_to_omegaconf,
@@ -352,6 +354,7 @@ def load_checkpoint_to_cpu(path, arg_overrides=None, load_on_all_ranks=False):
             overwrite_args_by_name(state["cfg"], arg_overrides)
 
     state = _upgrade_state_dict(state)
+    
     return state
 
 
@@ -401,6 +404,11 @@ def get_maybe_sharded_checkpoint_filename(
     else:
         return filename
 
+def weights_init(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.normal(m.weight.data)
+        # if m.bias:
+        #     torch.nn.init.normal(m.bias.data)
 
 def load_model_ensemble_and_task(
     filenames,
@@ -434,6 +442,9 @@ def load_model_ensemble_and_task(
                 raise IOError("Model file not found: {}".format(filename))
             if state is None:
                 state = load_checkpoint_to_cpu(filename, arg_overrides)
+                # state = load_checkpoint_to_cpu("../../checkpoints/ofa_base.pt", arg_overrides)
+
+
             if "args" in state and state["args"] is not None:
                 cfg = convert_namespace_to_omegaconf(state["args"])
             elif "cfg" in state and state["cfg"] is not None:
@@ -442,7 +453,6 @@ def load_model_ensemble_and_task(
                 raise RuntimeError(
                     f"Neither args nor cfg exist in state keys = {state.keys()}"
                 )
-
             if task is None:
                 task = tasks.setup_task(cfg.task)
 
@@ -472,7 +482,25 @@ def load_model_ensemble_and_task(
                 model = task.build_model(cfg.model)
                 model.load_state_dict(
                     state["model"], strict=strict, model_cfg=cfg.model
-                )
+                )           
+                model.apply(weights_init)
+            # total_num = sum(p.numel() for p in model.parameters())
+            # print("orignal param: ", total_num)
+            # cfg.model._name = 'ofa_base_decompose'
+            # cfg.model.decomposition = True
+            # cfg.model.orthogonal_size = 64
+            # model = task.build_model(cfg.model)
+            # for name, parameters in model.named_parameters():
+            #     print(name,':',parameters.size())
+            # new = load_svd_from_checkpoint(state["model"])
+            
+            # model.load_state_dict(
+            #     load_svd_from_checkpoint(state["model"]) , strict=strict, model_cfg=cfg.model
+            # )
+            # state['model'] = new
+            # torch_persistent_save(state, "../../checkpoints/snli_ve_base_best_svd_rank_64.pt")            
+            # total_num = sum(p.numel() for p in model.parameters())
+            # print("new model: ", total_num)
 
             # reset state so it gets loaded for the next model in ensemble
             state = None
@@ -873,3 +901,85 @@ def load_ema_from_checkpoint(fpath):
 
     new_state['model'] = params_dict
     return new_state
+
+def load_svd_from_checkpoint(weight):
+    """Loads exponential moving averaged (EMA) checkpoint from input and
+    returns a model with ema weights.
+
+    Args:
+      fpath: A string path of checkpoint to load from.
+
+    Returns:
+      A dict of string keys mapping to various values. The 'model' key
+      from the returned dict should correspond to an OrderedDict mapping
+      string parameter names to torch Tensors.
+    """
+    params_dict = collections.OrderedDict()
+    # EMA model is stored in a separate "extra state"
+    model_params = weight
+    svd_list = ["k_proj", "q_proj", "v_proj","out_proj", "fc1", "fc2"]
+    for key in list(model_params.keys()):
+        done_svd=False
+        p = model_params[key]
+        # if isinstance(p, torch.HalfTensor):
+        #     p = p.float()
+        for svd_object in svd_list:
+            if svd_object in key:
+                if 'bias' in key:
+                    bias_key = key.replace(svd_object, svd_object+'.s_linear')
+                    # bias_key_ori = key.replace(svd_object, svd_object+'.original')
+
+                    params_dict[bias_key] = p.clone()
+                    # params_dict[bias_key_ori] = p.clone()
+
+                    done_svd = True
+                    break 
+                u, s, v = torch.linalg.svd(p.t().clone(), full_matrices=False)
+                # linear = nn.Linear(p.shape[1], p.shape[0], bias=False)
+                # linear.weight = torch.nn.Parameter(p.clone())
+
+                size = min(p.shape[0], p.shape[1])
+
+                # linear1 = nn.Linear(p.shape[1], size, False)
+                # linear1.weight = torch.nn.Parameter(u.t().clone())
+                # linear2 = nn.Linear(size, size, False)
+                # linear2.weight = torch.nn.Parameter(torch.diag(s).t().clone())
+                # linear3 = nn.Linear(size, p.shape[0], False)
+                # linear3.weight = torch.nn.Parameter(v.t().clone())
+
+                # data = torch.randn(100, p.shape[1])
+                # dist = torch.dist(linear(data), linear3(linear2(linear1(data))))
+                # print("dist is : ", dist)
+                u_key = key.replace(svd_object, svd_object+'.ms_linear')                    
+                # s_key = key.replace(svd_object+'.weight', svd_object+'.orthogonal_ms_linear.parametrizations.weight.original')
+                s_key = key.replace(svd_object, svd_object+'.orthogonal_ms_linear')
+
+                v_key = key.replace(svd_object, svd_object+'.s_linear')
+
+                # ori_key = key.replace(svd_object, svd_object+'.original')
+
+                params_dict[u_key] = u[:, :32].t().clone()
+                params_dict[s_key] = torch.diag(s[:32]).t().clone()
+                params_dict[v_key] = v[:32, :].t().clone()
+                # params_dict[ori_key] = p.clone()
+
+                # dif = torch.dist(p, u[:,:128]@torch.diag(s[:128])@v[:128,:])
+                # print(dif)
+                done_svd=True
+                break
+            
+
+        if key not in params_dict and not done_svd:
+            params_dict[key] = p.clone()
+            # NOTE: clone() is needed in case of p is a shared parameter
+        # else:
+        #     raise ValueError("Key {} is repeated in svd model params.".format(key))
+        
+
+        if len(params_dict) == 0:
+            raise ValueError(
+                f"Input checkpoint path '{fpath}' does not contain "
+                "ema model weights, is this model trained with EMA?"
+            )
+    
+    return params_dict
