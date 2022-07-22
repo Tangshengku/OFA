@@ -910,7 +910,9 @@ class TransformerEncoder(FairseqEncoder):
             image_x = self.dropout_module(image_x)
             if self.quant_noise is not None:
                 image_x = self.quant_noise(image_x)
-            x = torch.cat([image_x, x], dim=1)
+            # x = torch.cat([image_x, x], dim=1)
+            # x =[image_x, x]
+
             embed = torch.cat([image_embed, embed], dim=1)
 
         if image_embed_2 is not None:
@@ -929,7 +931,7 @@ class TransformerEncoder(FairseqEncoder):
             x = torch.cat([image_x_2, x], dim=1)
             embed = torch.cat([image_embed_2, embed], dim=1)
 
-        return x, embed
+        return image_x, x, embed
 
     def forward(
         self,
@@ -1028,66 +1030,83 @@ class TransformerEncoder(FairseqEncoder):
 
         encoder_padding_mask = src_tokens.eq(self.padding_idx)
         if patch_images is not None:
-            encoder_padding_mask = torch.cat([image_padding_mask, encoder_padding_mask], dim=1)
+            encoder_padding_mask1 = torch.cat([image_padding_mask, encoder_padding_mask], dim=1)
         if patch_images_2 is not None:
             encoder_padding_mask = torch.cat([image_padding_mask_2, encoder_padding_mask], dim=1)
-        has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask.any())
+        has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask1.any())
 
         pos_embed = self.embed_positions(utils.new_arange(src_tokens))
-        x, encoder_embedding = self.forward_embedding(
+        image_emb, txt_emb, encoder_embedding = self.forward_embedding(
             src_tokens, image_embed, image_embed_2, token_embeddings,
             pos_embed, image_pos_embed, image_pos_embed_2
         )
 
         # account for padding while computing the representation
         if has_pads:
-            x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
+            txt_emb = txt_emb * (1 - encoder_padding_mask.unsqueeze(-1).type_as(txt_emb))
+            image_emb = image_emb * (1 - image_padding_mask.unsqueeze(-1).type_as(image_emb))
 
         # B x T x C -> T x B x C
-        x = x.transpose(0, 1)
+        # x = x.transpose(0, 1)
+        txt_emb = txt_emb.transpose(0, 1)
+        image_emb = image_emb.transpose(0, 1)
 
         pos_embed = self.pos_ln(pos_embed)
         if patch_images is not None:
             image_pos_embed = self.image_pos_ln(image_pos_embed)
-            pos_embed = torch.cat([image_pos_embed, pos_embed], dim=1)
-        if patch_images_2 is not None:
-            image_pos_embed_2 = self.image_pos_ln(image_pos_embed_2)
-            pos_embed = torch.cat([image_pos_embed_2, pos_embed], dim=1)
+            pos_embed1 = torch.cat([image_pos_embed, pos_embed], dim=1)
+        # if patch_images_2 is not None:
+        #     image_pos_embed_2 = self.image_pos_ln(image_pos_embed_2)
+        #     pos_embed = torch.cat([image_pos_embed_2, pos_embed], dim=1)
 
         pos_q = self.pos_q_linear(pos_embed).view(
-            x.size(1), x.size(0), self.num_attention_heads, -1
+            txt_emb.size(1), txt_emb.size(0), self.num_attention_heads, -1
         ).transpose(1, 2) * self.pos_scaling
         pos_k = self.pos_k_linear(pos_embed).view(
-            x.size(1), x.size(0), self.num_attention_heads, -1
+            txt_emb.size(1), txt_emb.size(0), self.num_attention_heads, -1
         ).transpose(1, 2)
-        abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
+        txt_abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
+
+        pos_q = self.pos_q_linear(image_pos_embed).view(
+            image_emb.size(1), image_emb.size(0), self.num_attention_heads, -1
+        ).transpose(1, 2) * self.pos_scaling
+        pos_k = self.pos_k_linear(image_pos_embed).view(
+            image_emb.size(1), image_emb.size(0), self.num_attention_heads, -1
+        ).transpose(1, 2)
+        image_abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
 
         encoder_states = []
 
-        if return_all_hiddens:
-            encoder_states.append(x)
+        # if return_all_hiddens:
+        #     encoder_states.append(x)
 
         # encoder layers
         for idx, layer in enumerate(self.layers):
-            self_attn_bias = abs_pos_bias.clone()
-            self_attn_bias[:, :, -src_tokens.size(1):, -src_tokens.size(1):] += self.get_rel_pos_bias(src_tokens, idx)
-            if patch_images_2 is not None:
-                self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
-                    self.get_image_rel_pos_bias(image_position_ids_2, idx)
-                self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
-                    self.get_image_rel_pos_bias(image_position_ids, idx)
-            elif patch_images is not None:
-                self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
-                    self.get_image_rel_pos_bias(image_position_ids, idx)
-            self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
+            txt_self_attn_bias = txt_abs_pos_bias.clone()
+            image_self_attn_bias = image_abs_pos_bias.clone()
+            txt_self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
+            image_self_attn_bias += self.get_image_rel_pos_bias(image_position_ids, idx)
+            # if patch_images_2 is not None:
+            #     self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
+            #         self.get_image_rel_pos_bias(image_position_ids_2, idx)
+            #     self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
+            #         self.get_image_rel_pos_bias(image_position_ids, idx)
+            # elif patch_images is not None:
+            #     self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
+            #         self.get_image_rel_pos_bias(image_position_ids, idx)
+            txt_self_attn_bias = txt_self_attn_bias.reshape(-1, txt_emb.size(0), txt_emb.size(0))
+            image_self_attn_bias = image_self_attn_bias.reshape(-1, image_emb.size(0), image_emb.size(0))
 
-            x = layer(
-                x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
+            txt_emb = layer(
+                txt_emb, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=txt_self_attn_bias
             )
-            if return_all_hiddens:
-                assert encoder_states is not None
-                encoder_states.append(x)
-
+            image_emb = layer(
+                image_emb, encoder_padding_mask=image_padding_mask if has_pads else None, self_attn_bias=image_self_attn_bias
+            )
+            # if return_all_hiddens:
+            #     assert encoder_states is not None
+            #     encoder_states.append(x)
+        x = torch.cat([image_emb, txt_emb])
         if self.layer_norm is not None:
             x = self.layer_norm(x)
 
@@ -1097,12 +1116,12 @@ class TransformerEncoder(FairseqEncoder):
         # The empty list is equivalent to None.
         return {
             "encoder_out": [x],  # T x B x C
-            "encoder_padding_mask": [encoder_padding_mask],  # B x T
+            "encoder_padding_mask": [encoder_padding_mask1],  # B x T
             "encoder_embedding": [],  # B x T x C
             "encoder_states": encoder_states,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
-            "position_embeddings": [pos_embed],  # B x T x C
+            "position_embeddings": [pos_embed1],  # B x T x C
         }
 
     @torch.jit.export
