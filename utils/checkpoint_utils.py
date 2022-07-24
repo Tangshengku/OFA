@@ -483,7 +483,6 @@ def load_model_ensemble_and_task(
                 model.load_state_dict(
                     state["model"], strict=strict, model_cfg=cfg.model
                 )           
-                model.apply(weights_init)
             # total_num = sum(p.numel() for p in model.parameters())
             # print("orignal param: ", total_num)
             # cfg.model._name = 'ofa_base_decompose'

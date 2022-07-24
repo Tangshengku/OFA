@@ -54,9 +54,9 @@ def main(cfg: DictConfig, **kwargs):
 
     if use_cuda:
         torch.cuda.set_device(cfg.distributed_training.device_id)
-    # overrides = {"data":"/data/tsk/snli_ve/snli_ve_test.tsv","bpe_dir":"./utils/BPE","selected_cols":"0,2,3,4,5"}
+    overrides = {"data":"/data/tsk/snli_ve/snli_ve_test.tsv","bpe_dir":"./utils/BPE","selected_cols":"0,2,3,4,5"}
     # Load ensemble
-    overrides =  eval(cfg.common_eval.model_overrides)
+    # overrides =  eval(cfg.common_eval.model_overrides)
     # Deal with beam-search / all-candidate VQA eval
     if cfg.task._name == "vqa_gen":
         overrides['val_inference_type'] = "beamsearch" if kwargs['beam_search_vqa_eval'] else "allcand"
@@ -126,19 +126,25 @@ def main(cfg: DictConfig, **kwargs):
     generator = task.build_generator(models, cfg.generation)
 
     results = []
+    times = []
     score_sum = torch.FloatTensor([0]).cuda()
     score_cnt = torch.FloatTensor([0]).cuda()
+    batch_size = 8
     for sample in progress:
+        batch_size = sample["net_input"]["src_tokens"].size(0)
         if "net_input" not in sample:
             continue
         sample = utils.move_to_cuda(sample) if use_cuda else sample
         sample = utils.apply_to_sample(apply_half, sample) if cfg.common.fp16 else sample
         with torch.no_grad():
-            result, scores = eval_step(task, generator, models, sample, **kwargs)
+            result, scores, time = eval_step(task, generator, models, sample, **kwargs)
         results += result
+        times.append(time) 
         score_sum += sum(scores) if scores is not None else 0
         score_cnt += len(scores) if scores is not None else 0
         progress.log({"sentences": sample["nsentences"]})
+    time = sum(times) / len(times) / batch_size
+    logger.info("inference time/batch: {}".format(time))
 
     merge_results(task, cfg, logger, score_cnt, score_sum, results)
 

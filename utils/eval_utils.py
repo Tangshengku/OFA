@@ -8,6 +8,7 @@ import math
 import json
 from itertools import chain
 import os
+import time
 
 import torch
 import torch.distributed as dist
@@ -146,6 +147,8 @@ def eval_refcoco(task, generator, models, sample, **kwargs):
 
 
 def eval_snli_ve(task, generator, models, sample, **kwargs):
+    torch.cuda.synchronize()
+    time_start = time.time()
     encoder_out = models[0].encoder(
         sample["net_input"]["src_tokens"],
         src_lengths=sample["net_input"]["src_lengths"],
@@ -197,12 +200,15 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         scores = scores.sum(1)
         scores = scores.view(-1, valid_size)
         valid_result.append(scores)
+    torch.cuda.synchronize()
+    time_end = time.time()
+    time_sum = time_end - time_start
     valid_result = torch.cat(valid_result, dim=-1)
     predicts = valid_result.argmax(1).tolist()
     hyps = [task.index2ans[predict_index] for predict_index in predicts]
     results = [{"uniq_id": id, "answer": hyp} for id, hyp in zip(sample["id"].tolist(), hyps)]
     scores = [ref_dict.get(hyp, 0) for ref_dict, hyp in zip(sample['ref_dict'], hyps)]
-    return results, scores
+    return results, scores, time_sum
 
 
 def eval_image_gen(task, generator, models, sample, **kwargs):

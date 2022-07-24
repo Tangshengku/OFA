@@ -5,7 +5,7 @@
 export MASTER_PORT=7061
 
 log_dir=./logs
-save_dir=./checkpoints
+save_dir=/data/tsk/checkpoints/ofa
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
