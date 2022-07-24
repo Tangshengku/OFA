@@ -21,7 +21,7 @@ arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.0
 lr=3e-5
-max_epoch=15
+max_epoch=10
 warmup_ratio=0.06
 batch_size=4
 update_freq=8
@@ -36,7 +36,7 @@ num_bins=1000
 patch_image_size=480
 prompt_type="prev_output"
 
-for max_epoch in {15,}; do
+for max_epoch in {10,}; do
   echo "max_epoch "${max_epoch}
   for lr in {5e-5,}; do
     echo "lr "${lr}
@@ -73,7 +73,7 @@ for max_epoch in {15,}; do
         --attention-dropout=${attention_dropout} \
         --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
         --lr-scheduler=polynomial_decay --lr=${lr} \
-        --max-epoch=15 --warmup-ratio=${warmup_ratio} \
+        --max-epoch=10 --warmup-ratio=${warmup_ratio} \
         --log-format=simple --log-interval=10 \
         --fixed-validation-seed=7 \
         --keep-best-checkpoints=1 \

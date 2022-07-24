@@ -1115,13 +1115,13 @@ class TransformerEncoder(FairseqEncoder):
         # TorchScript does not support mixed values so the values are all lists.
         # The empty list is equivalent to None.
         return {
-            "encoder_out": [x],  # T x B x C
-            "encoder_padding_mask": [encoder_padding_mask1],  # B x T
+            "encoder_out": [image_emb, txt_emb],  # T x B x C
+            "encoder_padding_mask": [image_padding_mask, encoder_padding_mask],  # B x T
             "encoder_embedding": [],  # B x T x C
             "encoder_states": encoder_states,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
-            "position_embeddings": [pos_embed1],  # B x T x C
+            "position_embeddings": [image_pos_embed, pos_embed],  # B x T x C
         }
 
     @torch.jit.export
@@ -1289,6 +1289,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         else:
             self.quant_noise = None
 
+        # self.fuse_img_txt = Linear()
         self.project_in_dim = (
             Linear(input_embed_dim, embed_dim, bias=False)
             if embed_dim != input_embed_dim
@@ -1559,15 +1560,22 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if alignment_layer is None:
             alignment_layer = self.num_layers - 1
 
-        enc: Optional[Tensor] = None
-        padding_mask: Optional[Tensor] = None
+        txt_enc: Optional[Tensor] = None
+        image_enc: Optional[Tensor] = None
+
+        txt_padding_mask: Optional[Tensor] = None
+        image_padding_mask: Optional[Tensor] = None
+
         if encoder_out is not None and len(encoder_out["encoder_out"]) > 0:
-            enc = encoder_out["encoder_out"][0]
+            image_enc = encoder_out["encoder_out"][0]
+            txt_enc = encoder_out["encoder_out"][1]
             assert (
-                enc.size()[1] == bs
-            ), f"Expected enc.shape == (t, {bs}, c) got {enc.shape}"
+                image_enc.size()[1] == bs
+            ), f"Expected enc.shape == (t, {bs}, c) got {image_enc.shape}"
         if encoder_out is not None and len(encoder_out["encoder_padding_mask"]) > 0:
-            padding_mask = encoder_out["encoder_padding_mask"][0]
+            image_padding_mask = encoder_out["encoder_padding_mask"][0]
+            txt_padding_mask = encoder_out["encoder_padding_mask"][1]
+
 
         bsz, tgt_len = prev_output_tokens.shape
         token_position_idx = utils.new_arange(prev_output_tokens)
@@ -1582,17 +1590,25 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             self_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, use_image=True)
             self_abs_pos_bias[code_masks] = self_image_abs_pos_bias[code_masks]
         # cross attn position bias
-        src_pos_embed = encoder_out['position_embeddings'][0]
-        cross_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_pos_embed)
+        src_txt_pos_embed = encoder_out['position_embeddings'][1]
+        txt_cross_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_txt_pos_embed)
         if code_masks is not None and torch.any(code_masks):
-            cross_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_pos_embed, use_image=True)
-            cross_abs_pos_bias[code_masks] = cross_image_abs_pos_bias[code_masks]
-        cross_abs_pos_bias = cross_abs_pos_bias.reshape(-1, *cross_abs_pos_bias.size()[-2:])
+            cross_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_txt_pos_embed, use_image=True)
+            txt_cross_abs_pos_bias[code_masks] = cross_image_abs_pos_bias[code_masks]
+        txt_cross_abs_pos_bias = txt_cross_abs_pos_bias.reshape(-1, *txt_cross_abs_pos_bias.size()[-2:])
+
+        src_image_pos_embed = encoder_out['position_embeddings'][0]
+        image_cross_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_image_pos_embed)
+        if code_masks is not None and torch.any(code_masks):
+            cross_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_image_pos_embed, use_image=True)
+            image_cross_abs_pos_bias[code_masks] = cross_image_abs_pos_bias[code_masks]
+        image_cross_abs_pos_bias = image_cross_abs_pos_bias.reshape(-1, *image_cross_abs_pos_bias.size()[-2:])
 
         all_prev_output_tokens = prev_output_tokens.clone()
         if incremental_state is not None:
             prev_output_tokens = prev_output_tokens[:, -1:]
-            cross_abs_pos_bias = cross_abs_pos_bias[:, -1:, :]
+            txt_cross_abs_pos_bias = txt_cross_abs_pos_bias[:, -1:, :]
+            image_cross_abs_pos_bias = image_cross_abs_pos_bias[:, -1:, :]
             tgt_pos_embed = tgt_pos_embed[:, -1:, :]
 
         # embed tokens and positions
@@ -1620,6 +1636,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
+        txt_x = x
+        image_x = x
 
         self_attn_padding_mask: Optional[Tensor] = None
         if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():
@@ -1646,19 +1664,32 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if incremental_state is not None:
                 self_attn_bias = self_attn_bias[:, -1:, :]
 
-            x, layer_attn, _ = layer(
-                x,
-                enc,
-                padding_mask,
+            txt_x, layer_attn, _ = layer(
+                txt_x,
+                txt_enc,
+                txt_padding_mask,
                 incremental_state,
                 self_attn_mask=self_attn_mask,
                 self_attn_padding_mask=self_attn_padding_mask,
                 need_attn=bool((idx == alignment_layer)),
                 need_head_weights=bool((idx == alignment_layer)),
                 self_attn_bias=self_attn_bias,
-                cross_attn_bias=cross_abs_pos_bias
+                cross_attn_bias=txt_cross_abs_pos_bias
             )
-            inner_states.append(x)
+            image_x, layer_attn, _ = layer(
+                image_x,
+                image_enc,
+                image_padding_mask,
+                incremental_state,
+                self_attn_mask=self_attn_mask,
+                self_attn_padding_mask=self_attn_padding_mask,
+                need_attn=bool((idx == alignment_layer)),
+                need_head_weights=bool((idx == alignment_layer)),
+                self_attn_bias=self_attn_bias,
+                cross_attn_bias=image_cross_abs_pos_bias
+            )
+            # inner_states.append(x)
+            inner_states.append(torch.cat([image_x, txt_x]))
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
 
@@ -1671,7 +1702,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         if self.layer_norm is not None:
             x = self.layer_norm(x)
-
+        # x = torch.cat([image_x, txt_x])
+        x = image_x + txt_x
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
 
