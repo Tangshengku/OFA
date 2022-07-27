@@ -477,6 +477,9 @@ class TransformerEncoder(FairseqEncoder):
         self.layers.extend(
             [self.build_encoder_layer(args, drop_path_rate=dpr[i]) for i in range(args.encoder_layers)]
         )
+        # self.layers[0].requires_grad_ = False
+        # self.layers[2].requires_grad_ = False
+        # self.layers[4].requires_grad_ = False
         self.num_layers = len(self.layers)
 
         if args.encoder_normalize_before:
@@ -771,7 +774,7 @@ class TransformerEncoder(FairseqEncoder):
                 self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
                     self.get_image_rel_pos_bias(image_position_ids, idx)
             self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
-
+        
             x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
@@ -1313,7 +1316,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             self_attn_bias = self_attn_bias.reshape(-1, *self_attn_bias.size()[-2:])
             if incremental_state is not None:
                 self_attn_bias = self_attn_bias[:, -1:, :]
-
+            
             x, layer_attn, _ = layer(
                 x,
                 enc,

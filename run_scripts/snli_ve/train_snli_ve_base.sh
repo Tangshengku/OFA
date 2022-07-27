@@ -2,9 +2,9 @@
 
 # The port for communication. Note that if you want to run multiple tasks on the same machine,
 # you need to specify different port numbers.
-export MASTER_PORT=7061
+export MASTER_PORT=7062
 
-experiment_name=train_with_encoder_decodertop1layerdrop
+experiment_name=train_with_encoder_decoderdropalternate3
 log_dir=./logs
 save_dir=/data/tsk/checkpoints/ofa
 mkdir -p $log_dir $save_dir
@@ -47,7 +47,7 @@ for max_epoch in {5,}; do
     save_path=${save_dir}/${experiment_name}${max_epoch}"_"${lr}
     mkdir -p $save_path
 
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
+    CUDA_VISIBLE_DEVICES=0,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=6 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \
