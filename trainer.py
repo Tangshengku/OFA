@@ -511,14 +511,60 @@ class Trainer(object):
                     self.model.load_state_dict(
                         state["model"], strict=False, model_cfg=self.cfg.model
                     )
-                    params = 0
-                    for p in state["model"].keys():
-                        if "embed_images" in p:
-                            num = 1
-                            for s in state["model"][p].shape:
-                                num *= s
-                            params += num
-                    print("resnet param: {}".format(params))
+                    total_num = sum(p[1].numel() for p in self.model.named_parameters())
+                    
+                    res_params = 0
+                    encoder_params = 0
+                    encoder_all_params = 0
+                    decoder_params = 0 
+                    decoder_all_params = 0
+                    for p in self.model.named_parameters():
+                        if 'embed_tokens' in p[0]:
+                            print(p[0], p[1].shape)
+                        if "embed_images" in p[0]:
+                            res_params += p[1].numel()
+                        if "encoder." in p[0]:
+                            encoder_all_params += p[1].numel()
+                        if "decoder." in p[0]:
+                            decoder_all_params += p[1].numel()    
+                        if "encoder.layers" in p[0]:
+                            encoder_params += p[1].numel()   
+                        if "decoder.layers" in p[0]:
+                            decoder_params += p[1].numel() 
+                    print("total param: {}".format(total_num))
+                    print("resnet param: {}".format(res_params))
+                    print("encoder all param: {}".format(encoder_all_params))
+                    print("encoder layer param: {}".format(encoder_params))
+                    print("decoder param: {}".format(decoder_params))
+                    print("decoder all param: {}".format(decoder_all_params))
+                    # res_params = 0
+                    # encoder_params = 0
+                    # encoder_all_params = 0
+                    # decoder_params = 0 
+                    # for p in state["model"].keys():
+                    #     if "embed_images" in p:
+                    #         res_param = 1
+                    #         for s in state["model"][p].shape:
+                    #             res_param *= s
+                    #         res_params += res_param
+                    #     # if "encoder" in p:
+                    #     #     encoder_param = 1
+                    #     #     for s in state["model"][p].shape:
+                    #     #         encoder_param *= s
+                    #     #     encoder_params += encoder_param
+                    #     if "encoder" in p:
+                    #         encoder_param = 1
+                    #         for s in state["model"][p].shape:
+                    #             encoder_param *= s
+                    #         encoder_params += encoder_param
+                    #     if "decoder" in p:
+                    #         decoder_param = 1
+                    #         for s in state["model"][p].shape:
+                    #             decoder_param *= s
+                    #         decoder_params += decoder_param    
+                    # print("resnet param: {}".format(res_params))
+                    # print("encoder layer param: {}".format(encoder_params))
+                    # print("decoder layer param: {}".format(decoder_params))
                 # save memory for later steps
                 if not (self.cfg.ema.store_ema and (self.cfg.checkpoint.use_latest_weights_to_init_ema or not ("extra_state" in state and "ema" in state["extra_state"]))):
                     del state["model"]
