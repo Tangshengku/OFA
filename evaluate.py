@@ -54,9 +54,11 @@ def main(cfg: DictConfig, **kwargs):
 
     if use_cuda:
         torch.cuda.set_device(cfg.distributed_training.device_id)
+    
+    overrides = {"data":"/data/tsk/snli_ve/snli_ve_test.tsv","bpe_dir":"./utils/BPE","selected_cols":"0,2,3,4,5"}
 
     # Load ensemble
-    overrides = eval(cfg.common_eval.model_overrides)
+    # overrides = eval(cfg.common_eval.model_overrides)
     # Deal with beam-search / all-candidate VQA eval
     if cfg.task._name == "vqa_gen":
         overrides['val_inference_type'] = "beamsearch" if kwargs['beam_search_vqa_eval'] else "allcand"

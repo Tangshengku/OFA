@@ -81,7 +81,7 @@ def encoder(B, NToken_txt, hidden_size, inter_dim, NToken_img=900):
 def decoder(B, NToken, gtToken, hidden_size, inter_dim):
     layer_num = 6
     flops = 0
-    for i in range(6):
+    for i in range(layer_num):
         flops += decoder_layer(B, NToken, gtToken, hidden_size, inter_dim)
     return flops
 print((resnet101(4) + encoder(4, 40, 768, 3072, 900) + decoder(4, 940, 40, 768, 3072))/4e9)

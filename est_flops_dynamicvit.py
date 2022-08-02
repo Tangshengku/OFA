@@ -428,8 +428,8 @@ def print_dynamic_vit():
 
     #print('EViT Tiny', EViT(C=192, rate=0.7) / 1e9) #change sparse here
     #print('EViT Small', EViT(C=384, rate=0.7) / 1e9) #change sparse here
-    #print('EViT Base', EViT(C=768, rate=1) / 1e9) #change sparse here
-    #print('EViT Base9', EViT(C=768, rate=0.9) / 1e9) #change sparse here
+    # print('EViT Base', EViT(C=768, rate=1) / 1e9) #change sparse here
+    # print('EViT Base9', EViT(C=768, rate=0.9) / 1e9) #change sparse here
     #print('EViT Base8', EViT(C=768, rate=0.8) / 1e9) #change sparse here
 
     
