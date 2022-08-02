@@ -15,7 +15,7 @@ user_dir=../../ofa_module
 
 data_dir=/data/tsk/snli_ve
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
-restore_file=../../checkpoints/ofa_base.pt
+restore_file=/data/tsk/checkpoints/ofa/train_with_encoder_decoderdropalternate3{5,}_{5e-5,}/checkpoint_1_1500.pt
 selected_cols=0,2,3,4,5
 
 task=snli_ve
@@ -47,7 +47,7 @@ for max_epoch in {5,}; do
     save_path=${save_dir}/${experiment_name}${max_epoch}"_"${lr}
     mkdir -p $save_path
 
-    CUDA_VISIBLE_DEVICES=0,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=6 --master_port=${MASTER_PORT} ../../train.py \
+    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \

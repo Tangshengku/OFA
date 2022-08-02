@@ -873,3 +873,91 @@ def load_ema_from_checkpoint(fpath):
 
     new_state['model'] = params_dict
     return new_state
+
+def load_svd_from_checkpoint(weight):
+    """Loads exponential moving averaged (EMA) checkpoint from input and
+    returns a model with ema weights.
+
+    Args:
+      fpath: A string path of checkpoint to load from.
+
+    Returns:
+      A dict of string keys mapping to various values. The 'model' key
+      from the returned dict should correspond to an OrderedDict mapping
+      string parameter names to torch Tensors.
+    """
+    params_dict = collections.OrderedDict()
+    # EMA model is stored in a separate "extra state"
+    model_params = weight
+    svd_list = ["embed_tokens", "output_projection"]
+    for key in list(model_params.keys()):
+        print(key, model_params[key].shape)
+        done_svd=False
+        p = model_params[key]
+        # if isinstance(p, torch.HalfTensor):
+        #     p = p.float()
+        for svd_object in svd_list:
+            if svd_object in key:
+                if 'bias' in key:
+                    bias_key = key.replace(svd_object, svd_object+'.s_linear')
+                    # bias_key_ori = key.replace(svd_object, svd_object+'.original')
+
+                    params_dict[bias_key] = p.clone()
+                    # params_dict[bias_key_ori] = p.clone()
+
+                    done_svd = True
+                    break 
+                u, s, v = torch.linalg.svd(p.clone(), full_matrices=False)
+                # linear = nn.Linear(p.shape[1], p.shape[0], bias=False)
+                # linear.weight = torch.nn.Parameter(p.clone())
+
+                size = min(p.shape[0], p.shape[1])
+
+                # linear1 = nn.Linear(p.shape[1], size, False)
+                # linear1.weight = torch.nn.Parameter(u.t().clone())
+                # linear2 = nn.Linear(size, size, False)
+                # linear2.weight = torch.nn.Parameter(torch.diag(s).t().clone())
+                # linear3 = nn.Linear(size, p.shape[0], False)
+                # linear3.weight = torch.nn.Parameter(v.t().clone())
+
+                # data = torch.randn(100, p.shape[1])
+                # dist = torch.dist(linear(data), linear3(linear2(linear1(data))))
+                # print("dist is : ", dist)
+                u_key = key
+                # u_key = key.replace(svd_object, svd_object+'.ms_linear')                    
+                # s_key = key.replace(svd_object+'.weight', svd_object+'.orthogonal_ms_linear.parametrizations.weight.original')
+                s_key = key.replace(svd_object, svd_object+"_orth")
+
+                v_key = key.replace(svd_object, svd_object+"_out")
+
+                # ori_key = key.replace(svd_object, svd_object+'.original')
+                if "embed_tokens" in key:
+                    params_dict[u_key] = u[:, :128].clone()
+                    params_dict[s_key] = torch.diag(s[:128]).t().clone()
+                    params_dict[v_key] = v[:128, :].t().clone()
+                else:
+                    params_dict[u_key] = u[:, :128].clone()
+                    params_dict[s_key] = torch.diag(s[:128]).clone()
+                    params_dict[v_key] = v[:128, :].clone()
+                # params_dict[ori_key] = p.clone()
+
+                # dif = torch.dist(p, u[:,:128]@torch.diag(s[:128])@v[:128,:])
+                # print(dif)
+                done_svd=True
+                break
+            
+
+        if key not in params_dict and not done_svd:
+            params_dict[key] = p.clone()
+            # NOTE: clone() is needed in case of p is a shared parameter
+        # else:
+        #     raise ValueError("Key {} is repeated in svd model params.".format(key))
+        
+
+        if len(params_dict) == 0:
+            raise ValueError(
+                f"Input checkpoint path '{fpath}' does not contain "
+                "ema model weights, is this model trained with EMA?"
+            )
+    
+    return params_dict
