@@ -505,18 +505,18 @@ class Trainer(object):
                     logger.info("use_ema_weights_to_init_param = True, will use EMA weights in the ckpt to init the model param...")
                     ema_state_dict = state["extra_state"]["ema_fp32_params"] if "ema_fp32_params" in state["extra_state"] else state["extra_state"]["ema"]
                     self.model.load_state_dict(
-                        ema_state_dict, strict=True, model_cfg=self.cfg.model
+                        ema_state_dict, strict=False, model_cfg=self.cfg.model
                     )
                 else:
                     self.model.load_state_dict(
-                        state["model"], strict=True, model_cfg=self.cfg.model
+                        state["model"], strict=False, model_cfg=self.cfg.model
                     )
                 # save memory for later steps
                 if not (self.cfg.ema.store_ema and (self.cfg.checkpoint.use_latest_weights_to_init_ema or not ("extra_state" in state and "ema" in state["extra_state"]))):
                     del state["model"]
                 if utils.has_parameters(self.get_criterion()):
                     self.get_criterion().load_state_dict(
-                        state["criterion"], strict=True
+                        state["criterion"], strict=False
                     )
                     del state["criterion"]
 

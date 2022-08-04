@@ -31,6 +31,7 @@ from fairseq.modules import (
 from fairseq.modules.checkpoint_activations import checkpoint_wrapper
 from fairseq.modules.quant_noise import quant_noise as apply_quant_noise_
 from torch import Tensor
+from torch.distributions import Categorical
 
 from .unify_transformer_layer import TransformerEncoderLayer, TransformerDecoderLayer
 from .resnet import ResNet
@@ -43,6 +44,10 @@ DEFAULT_MAX_TARGET_POSITIONS = 1024
 
 DEFAULT_MIN_PARAMS_TO_WRAP = int(1e8)
 
+def entropy(x):
+    # x: torch.Tensor, logits BEFORE softmax
+    x = torch.softmax(x, dim=0)               # softmax normalized prob distribution
+    return -torch.sum(x*torch.log(x), dim=0)
 
 def BatchNorm2d(out_chan, momentum=0.1, eps=1e-3):
     return nn.SyncBatchNorm.convert_sync_batchnorm(
@@ -99,10 +104,11 @@ class TransformerModel(FairseqEncoderDecoderModel):
         :prog:
     """
 
-    def __init__(self, args, encoder, decoder):
+    def __init__(self, args, encoder, decoder, early_exit=True):
         super().__init__(encoder, decoder)
         self.args = args
         self.supports_align_args = True
+        self.early_exit = True
 
     @staticmethod
     def add_args(parser):
@@ -303,8 +309,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
             decoder_embed_tokens.weight.requires_grad = False
         if getattr(args, "offload_activations", False):
             args.checkpoint_activations = True  # offloading implies checkpointing
-        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
-        decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens)
+        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens, early_exit=True)
+        decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens, early_exit=True)
         if not args.share_all_embeddings:
             min_params_to_wrap = getattr(
                 args, "min_params_to_wrap", DEFAULT_MIN_PARAMS_TO_WRAP
@@ -327,16 +333,17 @@ class TransformerModel(FairseqEncoderDecoderModel):
         return emb
 
     @classmethod
-    def build_encoder(cls, args, src_dict, embed_tokens):
-        return TransformerEncoder(args, src_dict, embed_tokens)
+    def build_encoder(cls, args, src_dict, embed_tokens, early_exit):
+        return TransformerEncoder(args, src_dict, embed_tokens, early_exit)
 
     @classmethod
-    def build_decoder(cls, args, tgt_dict, embed_tokens):
+    def build_decoder(cls, args, tgt_dict, embed_tokens, early_exit):
         return TransformerDecoder(
             args,
             tgt_dict,
             embed_tokens,
             no_encoder_attn=getattr(args, "no_cross_attention", False),
+            early_exit=early_exit
         )
 
     # TorchScript doesn't support optional arguments with variable length (**kwargs).
@@ -350,6 +357,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         features_only: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        is_eval: bool = False,
     ):
         """
         Run the forward pass for an encoder-decoder model.
@@ -358,7 +366,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         which are not supported by TorchScript.
         """
         encoder_out = self.encoder(
-            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens
+            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens, is_eval=is_eval
         )
         decoder_out = self.decoder(
             prev_output_tokens,
@@ -368,8 +376,9 @@ class TransformerModel(FairseqEncoderDecoderModel):
             alignment_heads=alignment_heads,
             src_lengths=src_lengths,
             return_all_hiddens=return_all_hiddens,
+            is_eval=is_eval,
         )
-        return decoder_out
+        return decoder_out, encoder_out
 
     # Since get_normalized_probs is in the Fairseq Model which is not scriptable,
     # I rewrite the get_normalized_probs from Base Class to call the
@@ -396,8 +405,9 @@ class TransformerEncoder(FairseqEncoder):
         embed_tokens (torch.nn.Embedding): input embedding
     """
 
-    def __init__(self, args, dictionary, embed_tokens):
+    def __init__(self, args, dictionary, embed_tokens, early_exit):
         self.args = args
+        self.early_exit = early_exit
         super().__init__(dictionary)
         self.register_buffer("version", torch.Tensor([3]))
 
@@ -475,7 +485,12 @@ class TransformerEncoder(FairseqEncoder):
 
         dpr = [x.item() for x in torch.linspace(0, args.encoder_drop_path_rate, args.encoder_layers)]
         self.layers.extend(
-            [self.build_encoder_layer(args, drop_path_rate=dpr[i]) for i in range(args.encoder_layers)]
+            [self.build_encoder_layer(args, drop_path_rate=dpr[i]) for i in range(args.encoder_layers-1)]
+        )
+        self.layers.extend(
+            [
+                self.build_encoder_layer(args, drop_path_rate=dpr[-1], is_lastlayer=True)
+            ]
         )
         self.num_layers = len(self.layers)
 
@@ -501,9 +516,11 @@ class TransformerEncoder(FairseqEncoder):
         self.register_buffer("token_rp_bucket", token_rp_bucket)
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.entangle_position_embedding = args.entangle_position_embedding
+        if self.early_exit:
+            self.freeze_weights()
 
-    def build_encoder_layer(self, args, drop_path_rate=0.0):
-        layer = TransformerEncoderLayer(args, drop_path_rate=drop_path_rate)
+    def build_encoder_layer(self, args, drop_path_rate=0.0, is_lastlayer=False):
+        layer = TransformerEncoderLayer(args, drop_path_rate=drop_path_rate, early_exit=self.early_exit, is_lastlayer=is_lastlayer)
         checkpoint = getattr(args, "checkpoint_activations", False)
         if checkpoint:
             offload_to_cpu = getattr(args, "offload_activations", False)
@@ -516,6 +533,11 @@ class TransformerEncoder(FairseqEncoder):
         )
         layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
         return layer
+    
+    def freeze_weights(self):
+        for name, param in self.named_parameters():
+            if "exit" not in name:
+                param.requires_grad = False
 
     def get_rel_pos_bias(self, x, idx):
         seq_len = x.size(1)
@@ -632,7 +654,8 @@ class TransformerEncoder(FairseqEncoder):
         code_masks: Optional[torch.Tensor] = None,
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
-        sample_patch_num: Optional[int] = None
+        sample_patch_num: Optional[int] = None,
+        is_eval: bool = False
     ):
         """
         Args:
@@ -664,7 +687,8 @@ class TransformerEncoder(FairseqEncoder):
                                        patch_masks,
                                        return_all_hiddens,
                                        token_embeddings,
-                                       sample_patch_num)
+                                       sample_patch_num,
+                                       is_eval)
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
     # can't access the base class model in Torchscript.
@@ -679,7 +703,8 @@ class TransformerEncoder(FairseqEncoder):
         patch_masks: Optional[torch.Tensor] = None,
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
-        sample_patch_num: Optional[int] = None
+        sample_patch_num: Optional[int] = None,
+        is_eval: bool = False
     ):
         """
         Args:
@@ -772,9 +797,13 @@ class TransformerEncoder(FairseqEncoder):
                     self.get_image_rel_pos_bias(image_position_ids, idx)
             self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
 
-            x = layer(
+            x, out_x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
+            if self.early_exit:
+                entropy_x = entropy(out_x.squeeze(-1))
+                if entropy_x < 0.5:
+                    break
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
@@ -794,6 +823,7 @@ class TransformerEncoder(FairseqEncoder):
             "src_tokens": [],
             "src_lengths": [],
             "position_embeddings": [pos_embed],  # B x T x C
+            "exit_layer": idx+1,
         }
 
     @torch.jit.export
@@ -923,9 +953,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         embed_tokens,
         no_encoder_attn=False,
         output_projection=None,
+        early_exit=False
     ):
         self.args = args
         super().__init__(dictionary)
+        self.early_exit = early_exit
         self.register_buffer("version", torch.Tensor([3]))
         self._future_mask = torch.empty(0)
 
@@ -996,7 +1028,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.layers.extend(
             [
                 self.build_decoder_layer(args, no_encoder_attn, drop_path_rate=dpr[i])
-                for i in range(args.decoder_layers)
+                for i in range(args.decoder_layers-1)
+            ]
+        )
+        self.layers.extend(
+            [
+                self.build_decoder_layer(args, no_encoder_attn, drop_path_rate=dpr[-1], is_lastlayer=True)
             ]
         )
         self.num_layers = len(self.layers)
@@ -1039,6 +1076,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.register_buffer("image_position_idx", image_position_idx)
         self.entangle_position_embedding = args.entangle_position_embedding
+        if self.early_exit:
+            self.freeze_weights()
 
     def build_output_projection(self, args, dictionary, embed_tokens):
         if args.adaptive_softmax_cutoff is not None:
@@ -1069,8 +1108,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         for i in range(num_base_layers):
             self.layers.insert(((i+1) * args.decoder_layers) // (num_base_layers + 1), BaseLayer(args))
 
-    def build_decoder_layer(self, args, no_encoder_attn=False, drop_path_rate=0.0):
-        layer = TransformerDecoderLayer(args, no_encoder_attn, drop_path_rate=drop_path_rate)
+    def build_decoder_layer(self, args, no_encoder_attn=False, drop_path_rate=0.0, is_lastlayer=False):
+        layer = TransformerDecoderLayer(args, no_encoder_attn, drop_path_rate=drop_path_rate, early_exit=self.early_exit, is_lastlayer=is_lastlayer)
         checkpoint = getattr(args, "checkpoint_activations", False)
         if checkpoint:
             offload_to_cpu = getattr(args, "offload_activations", False)
@@ -1083,6 +1122,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         )
         layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
         return layer
+
+    def freeze_weights(self):
+        for name, param in self.named_parameters():
+            if "exit" not in name:
+                param.requires_grad = False
 
     def get_rel_pos_bias(self, x, idx):
         seq_len = x.size(1)
@@ -1134,6 +1178,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         alignment_heads: Optional[int] = None,
         src_lengths: Optional[Any] = None,
         return_all_hiddens: bool = False,
+        is_eval: bool = False
     ):
         """
         Args:
@@ -1162,6 +1207,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             full_context_alignment=full_context_alignment,
             alignment_layer=alignment_layer,
             alignment_heads=alignment_heads,
+            is_eval=is_eval
         )
 
         if not features_only:
@@ -1177,6 +1223,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        is_eval: bool = False
     ):
         return self.extract_features_scriptable(
             prev_output_tokens,
@@ -1186,6 +1233,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             full_context_alignment,
             alignment_layer,
             alignment_heads,
+            is_eval
         )
 
     """
@@ -1203,6 +1251,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        is_eval: bool = False
     ):
         """
         Similar to *forward* but only return features.
@@ -1314,7 +1363,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if incremental_state is not None:
                 self_attn_bias = self_attn_bias[:, -1:, :]
 
-            x, layer_attn, _ = layer(
+            x, out_x, layer_attn, _ = layer(
                 x,
                 enc,
                 padding_mask,
@@ -1326,6 +1375,10 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self_attn_bias=self_attn_bias,
                 cross_attn_bias=cross_abs_pos_bias
             )
+            if self.early_exit and is_eval:
+                entropy_x = entropy(out_x.squeeze(-1))
+                if entropy_x < 0.5:
+                    break
             inner_states.append(x)
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
@@ -1346,7 +1399,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
 
-        return x, {"attn": [attn], "inner_states": inner_states}
+        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx+1}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""

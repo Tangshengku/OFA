@@ -79,7 +79,7 @@ class OFAModel(TransformerModel):
         features_only: bool = False,
         classification_head_name: Optional[str] = None,
         token_embeddings: Optional[torch.Tensor] = None,
-        return_all_hiddens: bool = False,
+        return_all_hiddens: bool = True,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
     ):
@@ -121,7 +121,7 @@ class OFAModel(TransformerModel):
                     x = head(sentence_representation)
                     break
 
-        return x, extra
+        return x, extra, encoder_out
 
     def register_embedding_tokens(self, ans2label_dict, src_dict, bpe):
         """Register embedding tokens"""

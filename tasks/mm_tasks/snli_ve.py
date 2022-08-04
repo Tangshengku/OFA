@@ -122,7 +122,8 @@ class SnliVeTask(OFATask):
                 sample["net_input"]["src_tokens"],
                 src_lengths=sample["net_input"]["src_lengths"],
                 patch_images=sample["net_input"]["patch_images"],
-                patch_masks=sample["net_input"]["patch_masks"]
+                patch_masks=sample["net_input"]["patch_masks"],
+                is_eval=True
             )
             device = sample["net_input"]["src_tokens"].device
             eos_item = torch.tensor([self.src_dict.eos()])
@@ -157,7 +158,7 @@ class SnliVeTask(OFATask):
                     encoder_out["position_embeddings"][0].repeat_interleave(valid_size, dim=0)
                 ]
 
-                decoder_out = model.decoder(valid_prev_output, encoder_out=new_encoder_out)
+                decoder_out = model.decoder(valid_prev_output, encoder_out=new_encoder_out, is_eval=True)
                 decoder_out[0].masked_fill_(~valid_constraint_masks, -math.inf)
                 lprobs = model.get_normalized_probs(decoder_out, log_probs=True)
                 scores = lprobs.gather(dim=-1, index=valid_tgt.unsqueeze(-1)).squeeze(-1)

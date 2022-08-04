@@ -64,9 +64,11 @@ class TransformerEncoderLayer(nn.Module):
         args (argparse.Namespace): parsed command-line arguments
     """
 
-    def __init__(self, args, drop_path_rate=0.0):
+    def __init__(self, args, drop_path_rate=0.0, early_exit=False, is_lastlayer=False):
         super().__init__()
         self.args = args
+        self.early_exit = early_exit
+        self.is_lastlayer = is_lastlayer
         self.embed_dim = args.encoder_embed_dim
         self.quant_noise = getattr(args, 'quant_noise_pq', 0)
         self.quant_noise_block_size = getattr(args, 'quant_noise_pq_block_size', 8) or 8
@@ -107,6 +109,9 @@ class TransformerEncoderLayer(nn.Module):
         self.w_resid = nn.Parameter(torch.ones(self.embed_dim, ), requires_grad=True) if getattr(args, 'scale_resids', False) else None
 
         self.final_layer_norm = LayerNorm(self.embed_dim)
+
+        if self.early_exit and not is_lastlayer:
+            self.exit_linear = nn.Linear(self.embed_dim, 1)
 
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
 
@@ -224,7 +229,10 @@ class TransformerEncoderLayer(nn.Module):
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
-        return x
+        out_x=None
+        if self.early_exit and not self.is_lastlayer:
+            out_x = self.exit_linear(x)
+        return x, out_x
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -245,16 +253,17 @@ class TransformerDecoderLayer(nn.Module):
     """
 
     def __init__(
-        self, args, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False, drop_path_rate=0.0
+        self, args, no_encoder_attn=False, add_bias_kv=False, add_zero_attn=False, drop_path_rate=0.0, early_exit=False, is_lastlayer=False
     ):
         super().__init__()
         self.embed_dim = args.decoder_embed_dim
+        self.is_lastlayer = is_lastlayer
         self.dropout_module = FairseqDropout(
             args.dropout, module_name=self.__class__.__name__
         )
         self.quant_noise = getattr(args, "quant_noise_pq", 0)
         self.quant_noise_block_size = getattr(args, "quant_noise_pq_block_size", 8)
-
+        self.early_exit = early_exit
         self.cross_self_attention = getattr(args, "cross_self_attention", False)
 
         self.self_attn = self.build_self_attention(
@@ -315,6 +324,8 @@ class TransformerDecoderLayer(nn.Module):
         self.need_attn = True
 
         self.onnx_trace = False
+        if self.early_exit and not is_lastlayer:
+            self.exit_linear = nn.Linear(self.embed_dim, 1)
 
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
 
@@ -373,7 +384,7 @@ class TransformerDecoderLayer(nn.Module):
         need_attn: bool = False,
         need_head_weights: bool = False,
         self_attn_bias: Optional[Tensor] = None,
-        cross_attn_bias: Optional[Tensor] = None
+        cross_attn_bias: Optional[Tensor] = None,
     ):
         """
         Args:
@@ -494,6 +505,9 @@ class TransformerDecoderLayer(nn.Module):
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
+        out_x=None
+        if self.early_exit and not self.is_lastlayer:
+            out_x = self.exit_linear(x)
         if self.onnx_trace and incremental_state is not None:
             saved_state = self.self_attn._get_input_buffer(incremental_state)
             assert saved_state is not None
@@ -506,7 +520,7 @@ class TransformerDecoderLayer(nn.Module):
             else:
                 self_attn_state = [saved_state["prev_key"], saved_state["prev_value"]]
             return x, attn, self_attn_state
-        return x, attn, None
+        return x, out_x, attn, None
 
     def make_generation_fast_(self, need_attn: bool = False, **kwargs):
         self.need_attn = need_attn

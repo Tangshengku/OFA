@@ -14,6 +14,7 @@ from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 from omegaconf import II
+from torch.nn import MSELoss
 
 
 @dataclass
@@ -197,13 +198,13 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             construct_rdrop_sample(sample)
 
         net_output = model(**sample["net_input"])
-        loss, nll_loss, ntokens = self.compute_loss(model, net_output, sample, update_num, reduce=reduce)
+        loss, nll_loss, ntokens = self.compute_early_exit_loss(model, net_output, sample, update_num, reduce=reduce)
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else ntokens
         )
         logging_output = {
             "loss": loss.data,
-            "nll_loss": nll_loss.data,
+            "nll_loss": 0.0,
             "ntokens": sample["ntokens"],
             "nsentences": sample["nsentences"],
             "sample_size": sample_size,
@@ -262,6 +263,41 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             constraint_end=self.constraint_end
         )
         return loss, nll_loss, ntokens
+    
+    def compute_early_exit_loss(self, model, net_output, sample, update_num, reduce=True):
+        conf = sample['conf'][:, None, None] if 'conf' in sample and sample['conf'] is not None else 1
+        decoder_x, extra, encoder_out = net_output
+        encoder_state = encoder_out["encoder_states"][1:-1]
+        encoder_final = encoder_out["encoder_states"][-1]
+        decoder_state = extra["inner_states"][1:-1]
+        decoder_final = extra["inner_states"][-1]
+        # if "constraint_masks" in sample and sample["constraint_masks"] is not None:
+        #     constraint_masks = sample["constraint_masks"]
+        #     encoder_final.masked_fill_(~constraint_masks, -math.inf)
+        #     decoder_final.masked_fill_(~constraint_masks, -math.inf)
+        lprobs_encoder_final = model.get_normalized_probs(encoder_final, log_probs=True) * conf
+        lprobs_decoder_final = model.get_normalized_probs(encoder_final, log_probs=True) * conf
+        ntokens = encoder_final.shape[0]
+        # target = model.get_targets(sample, net_output)
+        # lprobs = lprobs[target != self.padding_idx]
+        # target = target[target != self.padding_idx]
+        loss = 0.0
+        loss_fn = MSELoss()
+        for state in encoder_state:
+            # if "constraint_masks" in sample and sample["constraint_masks"] is not None:
+            #     constraint_masks = sample["constraint_masks"]
+            #     state.masked_fill_(~constraint_masks, -math.inf)
+            lprobs = model.get_normalized_probs(state, log_probs=True) * conf
+            loss += loss_fn(state, encoder_final.detach())
+        for state in decoder_state:
+            # if "constraint_masks" in sample and sample["constraint_masks"] is not None:
+            #     constraint_masks = sample["constraint_masks"]
+            #     state.masked_fill_(~constraint_masks, -math.inf)
+            # lprobs = model.get_normalized_probs(state, log_probs=True) * conf
+            loss += loss_fn(state, decoder_final.detach())
+        return loss, 0.0, ntokens
+
+    
 
     def compute_accuracy(self, model, net_output, sample):
         lprobs, target = self.get_lprobs_and_target(model, net_output, sample)
