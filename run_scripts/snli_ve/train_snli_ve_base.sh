@@ -2,9 +2,9 @@
 
 # The port for communication. Note that if you want to run multiple tasks on the same machine,
 # you need to specify different port numbers.
-export MASTER_PORT=7061
+export MASTER_PORT=7062
 
-experiment_name=train_with_encoder_decodertop1layerdrop
+experiment_name=train_with_encoder_decoderdropalternate3
 log_dir=./logs
 save_dir=/data/tsk/checkpoints/ofa
 mkdir -p $log_dir $save_dir
@@ -15,7 +15,7 @@ user_dir=../../ofa_module
 
 data_dir=/data/tsk/snli_ve
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
-restore_file=../../checkpoints/ofa_base.pt
+restore_file=/data/tsk/checkpoints/ofa/train_with_encoder_decoderdropalternate3{5,}_{5e-5,}/checkpoint_1_1500.pt
 selected_cols=0,2,3,4,5
 
 task=snli_ve

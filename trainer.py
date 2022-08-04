@@ -505,11 +505,15 @@ class Trainer(object):
                     logger.info("use_ema_weights_to_init_param = True, will use EMA weights in the ckpt to init the model param...")
                     ema_state_dict = state["extra_state"]["ema_fp32_params"] if "ema_fp32_params" in state["extra_state"] else state["extra_state"]["ema"]
                     self.model.load_state_dict(
-                        ema_state_dict, strict=False, model_cfg=self.cfg.model
+                        ema_state_dict, strict=True, model_cfg=self.cfg.model
                     )
                 else:
+                    newstate = checkpoint_utils.load_svd_from_checkpoint(state["model"])    
+                    state["model"] = newstate
+                    checkpoint_utils.torch_persistent_save(state, "./checkpoints/ofa_base_embed_svd_128.pt")
+
                     self.model.load_state_dict(
-                        state["model"], strict=False, model_cfg=self.cfg.model
+                        state["model"], strict=True, model_cfg=self.cfg.model
                     )
                     total_num = sum(p[1].numel() for p in self.model.named_parameters())
                     
@@ -570,7 +574,7 @@ class Trainer(object):
                     del state["model"]
                 if utils.has_parameters(self.get_criterion()):
                     self.get_criterion().load_state_dict(
-                        state["criterion"], strict=False
+                        state["criterion"], strict=True
                     )
                     del state["criterion"]
 

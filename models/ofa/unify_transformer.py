@@ -285,7 +285,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
                 raise ValueError(
                     "--share-all-embeddings not compatible with --decoder-embed-path"
                 )
-            encoder_embed_tokens = cls.build_embedding(
+            encoder_embed_tokens, emb_orth, emb_out = cls.build_embedding(
                 args, src_dict, args.encoder_embed_dim, args.encoder_embed_path
             )
             decoder_embed_tokens = encoder_embed_tokens
@@ -303,8 +303,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
             decoder_embed_tokens.weight.requires_grad = False
         if getattr(args, "offload_activations", False):
             args.checkpoint_activations = True  # offloading implies checkpointing
-        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
-        decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens)
+        encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens, emb_orth, emb_out)
+        decoder = cls.build_decoder(args, tgt_dict, decoder_embed_tokens, emb_orth, emb_out)
         if not args.share_all_embeddings:
             min_params_to_wrap = getattr(
                 args, "min_params_to_wrap", DEFAULT_MIN_PARAMS_TO_WRAP
@@ -319,23 +319,26 @@ class TransformerModel(FairseqEncoderDecoderModel):
         num_embeddings = len(dictionary)
         padding_idx = dictionary.pad()
 
-        emb = Embedding(num_embeddings, embed_dim, padding_idx)
+        emb = Embedding(num_embeddings, 128, padding_idx)
+        emb_orth = nn.Linear(128, 128, bias=False)
+        emb_out = nn.Linear(128, embed_dim, bias=False)
         # if provided, load from preloaded dictionaries
         if path:
             embed_dict = utils.parse_embedding(path)
             utils.load_embedding(embed_dict, dictionary, emb)
-        return emb
+        return emb, emb_orth, emb_out
 
     @classmethod
-    def build_encoder(cls, args, src_dict, embed_tokens):
-        return TransformerEncoder(args, src_dict, embed_tokens)
+    def build_encoder(cls, args, src_dict, embed_tokens, emb_orth, emb_out):
+        return TransformerEncoder(args, src_dict, embed_tokens, emb_orth, emb_out)
 
     @classmethod
-    def build_decoder(cls, args, tgt_dict, embed_tokens):
+    def build_decoder(cls, args, tgt_dict, embed_tokens, emb_orth, emb_out):
         return TransformerDecoder(
             args,
             tgt_dict,
             embed_tokens,
+            emb_orth, emb_out,
             no_encoder_attn=getattr(args, "no_cross_attention", False),
         )
 
@@ -396,7 +399,7 @@ class TransformerEncoder(FairseqEncoder):
         embed_tokens (torch.nn.Embedding): input embedding
     """
 
-    def __init__(self, args, dictionary, embed_tokens):
+    def __init__(self, args, dictionary, embed_tokens, emb_orth, emb_out):
         self.args = args
         super().__init__(dictionary)
         self.register_buffer("version", torch.Tensor([3]))
@@ -406,12 +409,15 @@ class TransformerEncoder(FairseqEncoder):
         )
         self.encoder_layerdrop = args.encoder_layerdrop
 
-        embed_dim = embed_tokens.embedding_dim
+        # embed_dim = embed_tokens.embedding_dim
+        embed_dim = 768
         self.padding_idx = embed_tokens.padding_idx
         self.max_source_positions = args.max_source_positions
         self.num_attention_heads = args.encoder_attention_heads
 
         self.embed_tokens = embed_tokens
+        self.embed_tokens_orth = emb_orth 
+        self.embed_tokens_out = emb_out
 
         self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
 
@@ -477,6 +483,9 @@ class TransformerEncoder(FairseqEncoder):
         self.layers.extend(
             [self.build_encoder_layer(args, drop_path_rate=dpr[i]) for i in range(args.encoder_layers)]
         )
+        self.layers[0].requires_grad_ = False
+        self.layers[2].requires_grad_ = False
+        self.layers[4].requires_grad_ = False
         self.num_layers = len(self.layers)
 
         if args.encoder_normalize_before:
@@ -576,7 +585,7 @@ class TransformerEncoder(FairseqEncoder):
     ):
         # embed tokens and positions
         if token_embedding is None:
-            token_embedding = self.embed_tokens(src_tokens)
+            token_embedding = self.embed_tokens_out(self.embed_tokens_orth(self.embed_tokens(src_tokens)))
         x = embed = self.embed_scale * token_embedding
         if self.entangle_position_embedding and pos_embed is not None:
             x += pos_embed
@@ -771,13 +780,13 @@ class TransformerEncoder(FairseqEncoder):
                 self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
                     self.get_image_rel_pos_bias(image_position_ids, idx)
             self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
-
-            x = layer(
-                x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
-            )
-            if return_all_hiddens:
-                assert encoder_states is not None
-                encoder_states.append(x)
+            if idx % 2 == 1:
+                x = layer(
+                    x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
+                )
+                if return_all_hiddens:
+                    assert encoder_states is not None
+                    encoder_states.append(x)
 
         if self.layer_norm is not None:
             x = self.layer_norm(x)
@@ -921,6 +930,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         args,
         dictionary,
         embed_tokens,
+        emb_orth, emb_out,
         no_encoder_attn=False,
         output_projection=None,
     ):
@@ -936,7 +946,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.share_input_output_embed = args.share_decoder_input_output_embed
         self.num_attention_heads = args.decoder_attention_heads
 
-        input_embed_dim = embed_tokens.embedding_dim
+        # input_embed_dim = embed_tokens.embedding_dim
+        input_embed_dim = 768
         embed_dim = args.decoder_embed_dim
         self.embed_dim = embed_dim
         self.output_embed_dim = args.decoder_output_dim
@@ -945,6 +956,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.max_target_positions = args.max_target_positions
 
         self.embed_tokens = embed_tokens
+        self.embed_tokens_orth = emb_orth 
+        self.embed_tokens_out = emb_out
 
         self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
 
@@ -1057,7 +1070,19 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self.embed_tokens.weight.shape[0],
                 bias=False,
             )
+            self.output_projection_orth = nn.Linear(
+                self.embed_tokens.weight.shape[1],
+                self.embed_tokens.weight.shape[1],
+                bias=False,
+            )
+            self.output_projection_out = nn.Linear(
+                768,
+                self.embed_tokens.weight.shape[1],
+                bias=False,
+            )
             self.output_projection.weight = self.embed_tokens.weight
+            self.output_projection_orth.weight = nn.Parameter(self.embed_tokens_orth.weight.t())
+            self.output_projection_out.weight = nn.Parameter(self.embed_tokens_out.weight.t())
         else:
             self.output_projection = nn.Linear(
                 self.output_embed_dim, len(dictionary), bias=False
@@ -1264,7 +1289,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             tgt_pos_embed = tgt_pos_embed[:, -1:, :]
 
         # embed tokens and positions
-        x = self.embed_scale * self.embed_tokens(prev_output_tokens)
+        x = self.embed_scale * self.embed_tokens_out(self.embed_tokens_orth(self.embed_tokens(prev_output_tokens)))
 
         if self.quant_noise is not None:
             x = self.quant_noise(x)
@@ -1313,22 +1338,22 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             self_attn_bias = self_attn_bias.reshape(-1, *self_attn_bias.size()[-2:])
             if incremental_state is not None:
                 self_attn_bias = self_attn_bias[:, -1:, :]
-
-            x, layer_attn, _ = layer(
-                x,
-                enc,
-                padding_mask,
-                incremental_state,
-                self_attn_mask=self_attn_mask,
-                self_attn_padding_mask=self_attn_padding_mask,
-                need_attn=bool((idx == alignment_layer)),
-                need_head_weights=bool((idx == alignment_layer)),
-                self_attn_bias=self_attn_bias,
-                cross_attn_bias=cross_abs_pos_bias
-            )
-            inner_states.append(x)
-            if layer_attn is not None and idx == alignment_layer:
-                attn = layer_attn.float().to(x)
+            if idx % 2 == 1:
+                x, layer_attn, _ = layer(
+                    x,
+                    enc,
+                    padding_mask,
+                    incremental_state,
+                    self_attn_mask=self_attn_mask,
+                    self_attn_padding_mask=self_attn_padding_mask,
+                    need_attn=bool((idx == alignment_layer)),
+                    need_head_weights=bool((idx == alignment_layer)),
+                    self_attn_bias=self_attn_bias,
+                    cross_attn_bias=cross_abs_pos_bias
+                )
+                inner_states.append(x)
+                if layer_attn is not None and idx == alignment_layer:
+                    attn = layer_attn.float().to(x)
 
         if attn is not None:
             if alignment_heads is not None:
@@ -1352,7 +1377,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         """Project features to the vocabulary size."""
         if self.adaptive_softmax is None:
             # project back to size of vocabulary
-            return self.output_projection(features)
+            return self.output_projection(self.output_projection_orth(self.output_projection_out(features)))
         else:
             return features
 
