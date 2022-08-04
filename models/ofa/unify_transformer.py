@@ -800,9 +800,9 @@ class TransformerEncoder(FairseqEncoder):
             x, out_x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
-            if self.early_exit:
+            if self.early_exit and is_eval:
                 entropy_x = entropy(out_x.squeeze(-1))
-                if entropy_x < 0.5:
+                if entropy_x.item() < 0.5:
                     break
             if return_all_hiddens:
                 assert encoder_states is not None
@@ -1377,7 +1377,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             )
             if self.early_exit and is_eval:
                 entropy_x = entropy(out_x.squeeze(-1))
-                if entropy_x < 0.5:
+                if entropy_x.item() < 0.5:
                     break
             inner_states.append(x)
             if layer_attn is not None and idx == alignment_layer:
