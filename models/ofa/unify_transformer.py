@@ -1081,8 +1081,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 bias=False,
             )
             self.output_projection.weight = self.embed_tokens.weight
-            self.output_projection_orth.weight = nn.Parameter(self.embed_tokens_orth.weight.t())
-            self.output_projection_out.weight = nn.Parameter(self.embed_tokens_out.weight.t())
+            self.output_projection_orth.weight = nn.Parameter(self.embed_tokens_orth.weight.t().contiguous())
+            self.output_projection_out.weight = nn.Parameter(self.embed_tokens_out.weight.t().contiguous())
         else:
             self.output_projection = nn.Linear(
                 self.output_embed_dim, len(dictionary), bias=False
