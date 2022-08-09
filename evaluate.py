@@ -125,18 +125,20 @@ def main(cfg: DictConfig, **kwargs):
     results = []
     score_sum = torch.FloatTensor([0]).cuda()
     score_cnt = torch.FloatTensor([0]).cuda()
+    exit_layer_nums = 0
     for sample in progress:
         if "net_input" not in sample:
             continue
         sample = utils.move_to_cuda(sample) if use_cuda else sample
         sample = utils.apply_to_sample(apply_half, sample) if cfg.common.fp16 else sample
         with torch.no_grad():
-            result, scores = eval_step(task, generator, models, sample, **kwargs)
+            result, scores, exit_layer_num = eval_step(task, generator, models, sample, **kwargs)
         results += result
+        exit_layer_nums += exit_layer_num
         score_sum += sum(scores) if scores is not None else 0
         score_cnt += len(scores) if scores is not None else 0
         progress.log({"sentences": sample["nsentences"]})
-
+    print(exit_layer_nums/score_cnt)
     merge_results(task, cfg, logger, score_cnt, score_sum, results)
 
 

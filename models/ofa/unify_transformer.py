@@ -758,6 +758,8 @@ class TransformerEncoder(FairseqEncoder):
         if return_all_hiddens:
             encoder_states.append(x)
 
+        state=[]
+        state.append(x)
         # encoder layers
         for idx, layer in enumerate(self.layers):
             self_attn_bias = abs_pos_bias.clone()
@@ -775,6 +777,12 @@ class TransformerEncoder(FairseqEncoder):
             x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
+            
+            similarity = nn.CosineSimilarity()
+            layer_similarity = similarity(x.clone().flatten(), state[-1].clone().flatten())
+            if layer_similarity > 0.8:
+                break
+
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
@@ -794,6 +802,7 @@ class TransformerEncoder(FairseqEncoder):
             "src_tokens": [],
             "src_lengths": [],
             "position_embeddings": [pos_embed],  # B x T x C
+            "exit_layer": [idx + 1]
         }
 
     @torch.jit.export

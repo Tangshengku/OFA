@@ -152,6 +152,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         patch_images=sample["net_input"]["patch_images"],
         patch_masks=sample["net_input"]["patch_masks"]
     )
+    exit_layer_num = encoder_out["exit_layer"][0]
     device = sample["net_input"]["src_tokens"].device
     eos_item = torch.tensor([task.src_dict.eos()])
     pad = task.src_dict.pad()
@@ -202,7 +203,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
     hyps = [task.index2ans[predict_index] for predict_index in predicts]
     results = [{"uniq_id": id, "answer": hyp} for id, hyp in zip(sample["id"].tolist(), hyps)]
     scores = [ref_dict.get(hyp, 0) for ref_dict, hyp in zip(sample['ref_dict'], hyps)]
-    return results, scores
+    return results, scores, exit_layer_num
 
 
 def eval_image_gen(task, generator, models, sample, **kwargs):
