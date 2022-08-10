@@ -153,6 +153,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         patch_masks=sample["net_input"]["patch_masks"]
     )
     exit_layer_num = encoder_out["exit_layer"][0]
+    decoder_layer = 0
     device = sample["net_input"]["src_tokens"].device
     eos_item = torch.tensor([task.src_dict.eos()])
     pad = task.src_dict.pad()
@@ -191,6 +192,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
 
         decoder_out = models[0].decoder(valid_prev_output, encoder_out=new_encoder_out)
         decoder_out[0].masked_fill_(~valid_constraint_masks, -math.inf)
+        decoder_layer = decoder_out[1]['exit_layer']
         lprobs = models[0].get_normalized_probs(decoder_out, log_probs=True)
         scores = lprobs.gather(dim=-1, index=valid_tgt.unsqueeze(-1)).squeeze(-1)
         scores = scores.masked_fill(valid_tgt.eq(task.tgt_dict.pad()), 0)
@@ -203,7 +205,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
     hyps = [task.index2ans[predict_index] for predict_index in predicts]
     results = [{"uniq_id": id, "answer": hyp} for id, hyp in zip(sample["id"].tolist(), hyps)]
     scores = [ref_dict.get(hyp, 0) for ref_dict, hyp in zip(sample['ref_dict'], hyps)]
-    return results, scores, exit_layer_num
+    return results, scores, exit_layer_num, decoder_layer
 
 
 def eval_image_gen(task, generator, models, sample, **kwargs):
@@ -337,6 +339,8 @@ def merge_results(task, cfg, logger, score_cnt, score_sum, results):
             dist.all_gather_object(gather_results, results)
             dist.all_reduce(score_sum.data)
             dist.all_reduce(score_cnt.data)
+            
+            
         if score_cnt.item() > 0:
             logger.info("score_sum: {}, score_cnt: {}, score: {}".format(
                 score_sum, score_cnt, round(score_sum.item() / score_cnt.item(), 4)

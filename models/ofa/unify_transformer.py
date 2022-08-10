@@ -778,11 +778,11 @@ class TransformerEncoder(FairseqEncoder):
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
             
-            similarity = nn.CosineSimilarity()
-            layer_similarity = similarity(x.clone().flatten(), state[-1].clone().flatten())
-            if layer_similarity > 0.8:
+            similarity = nn.CosineSimilarity(eps=1e-6)
+            layer_similarity = similarity(F.normalize(x.clone().view(1, -1), dim=1), F.normalize(state[-1].clone().view(1, -1),dim=1))
+            if layer_similarity > 0.80:
                 break
-
+            state.append(x)
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
@@ -1335,6 +1335,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self_attn_bias=self_attn_bias,
                 cross_attn_bias=cross_abs_pos_bias
             )
+            if idx > 0:
+                similarity = nn.CosineSimilarity(eps=1e-6)
+                layer_similarity = similarity(F.normalize(x.clone().flatten().view(1, -1), dim=1), F.normalize(inner_states[-1].clone().flatten().view(1, -1), dim=1))
+                if layer_similarity > 0.8:
+                    break
             inner_states.append(x)
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
@@ -1355,7 +1360,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
 
-        return x, {"attn": [attn], "inner_states": inner_states}
+        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx + 1}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""
