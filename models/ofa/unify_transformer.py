@@ -352,6 +352,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         features_only: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        is_train = True
     ):
         """
         Run the forward pass for an encoder-decoder model.
@@ -360,7 +361,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         which are not supported by TorchScript.
         """
         encoder_out = self.encoder(
-            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens
+            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens, is_train=is_train 
         )
         decoder_out = self.decoder(
             prev_output_tokens,
@@ -943,7 +944,8 @@ class TransformerEncoder(FairseqEncoder):
         code_masks: Optional[torch.Tensor] = None,
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
-        sample_patch_num: Optional[int] = None
+        sample_patch_num: Optional[int] = None,
+        is_train: bool = True
     ):
         """
         Args:
@@ -975,7 +977,7 @@ class TransformerEncoder(FairseqEncoder):
                                        patch_masks,
                                        return_all_hiddens,
                                        token_embeddings,
-                                       sample_patch_num)
+                                       sample_patch_num, is_train)
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
     # can't access the base class model in Torchscript.
@@ -990,7 +992,8 @@ class TransformerEncoder(FairseqEncoder):
         patch_masks: Optional[torch.Tensor] = None,
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
-        sample_patch_num: Optional[int] = None
+        sample_patch_num: Optional[int] = None,
+        is_train: bool = True
     ):
         """
         Args:
@@ -1075,34 +1078,55 @@ class TransformerEncoder(FairseqEncoder):
         ).transpose(1, 2)
         image_abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
 
-        encoder_states = []
+        encoder_states_txt = []
+        encoder_states_img = []
 
         # if return_all_hiddens:
-        #     encoder_states.append(x)
+            # encoder_states.append(x)
+        encoder_states_txt.append(txt_emb)
+        encoder_states_img.append(image_emb)
 
         # encoder layers
+        txt_exit_layer = -1
+        img_exit_layer = -1
         for idx, layer in enumerate(self.layers):
-            txt_self_attn_bias = txt_abs_pos_bias.clone()
-            image_self_attn_bias = image_abs_pos_bias.clone()
+            txt_self_attn_bias = txt_abs_pos_bias
             txt_self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
-            image_self_attn_bias += self.get_image_rel_pos_bias(image_position_ids, idx)
-            # if patch_images_2 is not None:
-            #     self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
-            #         self.get_image_rel_pos_bias(image_position_ids_2, idx)
-            #     self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
-            #         self.get_image_rel_pos_bias(image_position_ids, idx)
-            # elif patch_images is not None:
-            #     self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
-            #         self.get_image_rel_pos_bias(image_position_ids, idx)
             txt_self_attn_bias = txt_self_attn_bias.reshape(-1, txt_emb.size(0), txt_emb.size(0))
-            image_self_attn_bias = image_self_attn_bias.reshape(-1, image_emb.size(0), image_emb.size(0))
-
+            
             txt_emb = layer(
                 txt_emb, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=txt_self_attn_bias
             )
+            if not is_train:
+                similarity = nn.CosineSimilarity(eps=1e-6)
+                layer_similarity = similarity(F.normalize(txt_emb.clone().flatten().view(1, -1), dim=1), F.normalize(encoder_states_txt[-1].clone().flatten().view(1, -1),dim=1))
+                if layer_similarity > 1:
+                    txt_exit_layer = idx + 1
+                    break
+            encoder_states_txt.append(txt_emb)
+
+        for idx, layer in enumerate(self.layers):
+            image_self_attn_bias = image_abs_pos_bias
+            image_self_attn_bias += self.get_image_rel_pos_bias(image_position_ids, idx)
+            if patch_images_2 is not None:
+                image_self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
+                    self.get_image_rel_pos_bias(image_position_ids_2, idx)
+                image_self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
+                    self.get_image_rel_pos_bias(image_position_ids, idx)
+            elif patch_images is not None:
+                image_self_attn_bias += \
+                    self.get_image_rel_pos_bias(image_position_ids, idx)
+            image_self_attn_bias = image_self_attn_bias.reshape(-1, image_emb.size(0), image_emb.size(0))
             image_emb = layer(
                 image_emb, encoder_padding_mask=image_padding_mask if has_pads else None, self_attn_bias=image_self_attn_bias
             )
+            if not is_train:
+                similarity = nn.CosineSimilarity(eps=1e-6)
+                layer_similarity = similarity(F.normalize(image_emb.clone().flatten().view(1, -1), dim=1), F.normalize(encoder_states_img[-1].clone().flatten().view(1, -1),dim=1))
+                if layer_similarity > 1:
+                    img_exit_layer = idx + 1
+                    break
+            encoder_states_img.append(image_emb)
             # if return_all_hiddens:
             #     assert encoder_states is not None
             #     encoder_states.append(x)
@@ -1115,13 +1139,14 @@ class TransformerEncoder(FairseqEncoder):
         # TorchScript does not support mixed values so the values are all lists.
         # The empty list is equivalent to None.
         return {
-            "encoder_out": [image_emb, txt_emb],  # T x B x C
-            "encoder_padding_mask": [image_padding_mask, encoder_padding_mask],  # B x T
+            "encoder_out": [x],  # T x B x C
+            "encoder_padding_mask": [encoder_padding_mask1],  # B x T
             "encoder_embedding": [],  # B x T x C
-            "encoder_states": encoder_states,  # List[T x B x C]
+            "encoder_states": encoder_states_txt,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
-            "position_embeddings": [image_pos_embed, pos_embed],  # B x T x C
+            "position_embeddings": [pos_embed1],  # B x T x C
+            "exit_layer": [txt_exit_layer, img_exit_layer]
         }
 
     @torch.jit.export
@@ -1166,7 +1191,8 @@ class TransformerEncoder(FairseqEncoder):
         if len(encoder_out["position_embeddings"]) == 0:
             new_position_embeddings = []
         else:
-            new_position_embeddings = [(encoder_out["position_embeddings"][0]).index_select(0, new_order)]
+            new_position_embeddings = [(encoder_out["position_embeddings"][0]).index_select(0, new_order)
+            ]
 
         encoder_states = encoder_out["encoder_states"]
         if len(encoder_states) > 0:
@@ -1560,21 +1586,21 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if alignment_layer is None:
             alignment_layer = self.num_layers - 1
 
-        txt_enc: Optional[Tensor] = None
+        # txt_enc: Optional[Tensor] = None
         image_enc: Optional[Tensor] = None
 
-        txt_padding_mask: Optional[Tensor] = None
+        # txt_padding_mask: Optional[Tensor] = None
         image_padding_mask: Optional[Tensor] = None
 
         if encoder_out is not None and len(encoder_out["encoder_out"]) > 0:
             image_enc = encoder_out["encoder_out"][0]
-            txt_enc = encoder_out["encoder_out"][1]
+            # txt_enc = encoder_out["encoder_out"][1]
             assert (
                 image_enc.size()[1] == bs
             ), f"Expected enc.shape == (t, {bs}, c) got {image_enc.shape}"
         if encoder_out is not None and len(encoder_out["encoder_padding_mask"]) > 0:
             image_padding_mask = encoder_out["encoder_padding_mask"][0]
-            txt_padding_mask = encoder_out["encoder_padding_mask"][1]
+            # txt_padding_mask = encoder_out["encoder_padding_mask"][1]
 
 
         bsz, tgt_len = prev_output_tokens.shape
@@ -1590,12 +1616,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             self_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, use_image=True)
             self_abs_pos_bias[code_masks] = self_image_abs_pos_bias[code_masks]
         # cross attn position bias
-        src_txt_pos_embed = encoder_out['position_embeddings'][1]
-        txt_cross_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_txt_pos_embed)
-        if code_masks is not None and torch.any(code_masks):
-            cross_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_txt_pos_embed, use_image=True)
-            txt_cross_abs_pos_bias[code_masks] = cross_image_abs_pos_bias[code_masks]
-        txt_cross_abs_pos_bias = txt_cross_abs_pos_bias.reshape(-1, *txt_cross_abs_pos_bias.size()[-2:])
+        # src_txt_pos_embed = encoder_out['position_embeddings'][1]
+        # txt_cross_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_txt_pos_embed)
+        # if code_masks is not None and torch.any(code_masks):
+        #     cross_image_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_txt_pos_embed, use_image=True)
+        #     txt_cross_abs_pos_bias[code_masks] = cross_image_abs_pos_bias[code_masks]
+        # txt_cross_abs_pos_bias = txt_cross_abs_pos_bias.reshape(-1, *txt_cross_abs_pos_bias.size()[-2:])
 
         src_image_pos_embed = encoder_out['position_embeddings'][0]
         image_cross_abs_pos_bias = self.get_pos_info(prev_output_tokens, tgt_pos_embed, src_pos_embed=src_image_pos_embed)
@@ -1607,7 +1633,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         all_prev_output_tokens = prev_output_tokens.clone()
         if incremental_state is not None:
             prev_output_tokens = prev_output_tokens[:, -1:]
-            txt_cross_abs_pos_bias = txt_cross_abs_pos_bias[:, -1:, :]
+            # txt_cross_abs_pos_bias = txt_cross_abs_pos_bias[:, -1:, :]
             image_cross_abs_pos_bias = image_cross_abs_pos_bias[:, -1:, :]
             tgt_pos_embed = tgt_pos_embed[:, -1:, :]
 
@@ -1636,8 +1662,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
-        txt_x = x
-        image_x = x
+        # txt_x = x
+        # image_x = x
 
         self_attn_padding_mask: Optional[Tensor] = None
         if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():
@@ -1664,20 +1690,20 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if incremental_state is not None:
                 self_attn_bias = self_attn_bias[:, -1:, :]
 
-            txt_x, layer_attn, _ = layer(
-                txt_x,
-                txt_enc,
-                txt_padding_mask,
-                incremental_state,
-                self_attn_mask=self_attn_mask,
-                self_attn_padding_mask=self_attn_padding_mask,
-                need_attn=bool((idx == alignment_layer)),
-                need_head_weights=bool((idx == alignment_layer)),
-                self_attn_bias=self_attn_bias,
-                cross_attn_bias=txt_cross_abs_pos_bias
-            )
-            image_x, layer_attn, _ = layer(
-                image_x,
+            # txt_x, layer_attn, _ = layer(
+            #     txt_x,
+            #     txt_enc,
+            #     txt_padding_mask,
+            #     incremental_state,
+            #     self_attn_mask=self_attn_mask,
+            #     self_attn_padding_mask=self_attn_padding_mask,
+            #     need_attn=bool((idx == alignment_layer)),
+            #     need_head_weights=bool((idx == alignment_layer)),
+            #     self_attn_bias=self_attn_bias,
+            #     cross_attn_bias=txt_cross_abs_pos_bias
+            # )
+            x, layer_attn, _ = layer(
+                x,
                 image_enc,
                 image_padding_mask,
                 incremental_state,
@@ -1689,7 +1715,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 cross_attn_bias=image_cross_abs_pos_bias
             )
             # inner_states.append(x)
-            inner_states.append(torch.cat([image_x, txt_x]))
+            inner_states.append(x)
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
 
@@ -1703,7 +1729,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.layer_norm is not None:
             x = self.layer_norm(x)
         # x = torch.cat([image_x, txt_x])
-        x = image_x + txt_x
+        # x = image_x + txt_x
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
 

@@ -155,6 +155,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         patch_images=sample["net_input"]["patch_images"],
         patch_masks=sample["net_input"]["patch_masks"]
     )
+    txt_layer, img_layer = encoder_out["exit_layer"]
     device = sample["net_input"]["src_tokens"].device
     eos_item = torch.tensor([task.src_dict.eos()])
     pad = task.src_dict.pad()
@@ -182,13 +183,16 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
 
         new_encoder_out = {}
         new_encoder_out["encoder_out"] = [
-            encoder_out["encoder_out"][0].repeat_interleave(valid_size, dim=1)
+            encoder_out["encoder_out"][0].repeat_interleave(valid_size, dim=1),
+            encoder_out["encoder_out"][1].repeat_interleave(valid_size, dim=1)
         ]
         new_encoder_out["encoder_padding_mask"] = [
-            encoder_out["encoder_padding_mask"][0].repeat_interleave(valid_size, dim=0)
+            encoder_out["encoder_padding_mask"][0].repeat_interleave(valid_size, dim=0),
+            encoder_out["encoder_padding_mask"][1].repeat_interleave(valid_size, dim=0)
         ]
         new_encoder_out["position_embeddings"] = [
-            encoder_out["position_embeddings"][0].repeat_interleave(valid_size, dim=0)
+            encoder_out["position_embeddings"][0].repeat_interleave(valid_size, dim=0),
+            encoder_out["position_embeddings"][1].repeat_interleave(valid_size, dim=0)
         ]
 
         decoder_out = models[0].decoder(valid_prev_output, encoder_out=new_encoder_out)
@@ -208,7 +212,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
     hyps = [task.index2ans[predict_index] for predict_index in predicts]
     results = [{"uniq_id": id, "answer": hyp} for id, hyp in zip(sample["id"].tolist(), hyps)]
     scores = [ref_dict.get(hyp, 0) for ref_dict, hyp in zip(sample['ref_dict'], hyps)]
-    return results, scores, time_sum
+    return results, scores, time_sum, txt_layer, img_layer
 
 
 def eval_image_gen(task, generator, models, sample, **kwargs):

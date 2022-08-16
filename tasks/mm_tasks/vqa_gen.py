@@ -217,13 +217,16 @@ class VqaGenTask(OFATask):
 
                     new_encoder_out = {}
                     new_encoder_out["encoder_out"] = [
-                        encoder_out["encoder_out"][0].repeat_interleave(valid_size, dim=1)
+                        encoder_out["encoder_out"][0].repeat_interleave(valid_size, dim=1),
+                        encoder_out["encoder_out"][1].repeat_interleave(valid_size, dim=1)
                     ]
                     new_encoder_out["encoder_padding_mask"] = [
-                        encoder_out["encoder_padding_mask"][0].repeat_interleave(valid_size, dim=0)
+                        encoder_out["encoder_padding_mask"][0].repeat_interleave(valid_size, dim=0),
+                        encoder_out["encoder_padding_mask"][1].repeat_interleave(valid_size, dim=0)
                     ]
                     new_encoder_out["position_embeddings"] = [
-                        encoder_out["position_embeddings"][0].repeat_interleave(valid_size, dim=0)
+                        encoder_out["position_embeddings"][0].repeat_interleave(valid_size, dim=0),
+                        encoder_out["position_embeddings"][1].repeat_interleave(valid_size, dim=0)
                     ]
 
                     decoder_out = eval_model.decoder(valid_prev_output, encoder_out=new_encoder_out)

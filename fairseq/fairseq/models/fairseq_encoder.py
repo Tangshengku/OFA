@@ -40,7 +40,7 @@ class FairseqEncoder(nn.Module):
         """
         raise NotImplementedError
 
-    def forward_torchscript(self, net_input: Dict[str, Tensor]):
+    def forward_torchscript(self, net_input: Dict[str, Tensor], is_train=True):
         """A TorchScript-compatible version of forward.
 
         Encoders which use additional arguments may want to override
@@ -50,15 +50,17 @@ class FairseqEncoder(nn.Module):
             return self.forward(
                 src_tokens=net_input["src_tokens"],
                 src_lengths=net_input["src_lengths"],
+                is_train=is_train
             )
         else:
-            return self.forward_non_torchscript(net_input)
+            return self.forward_non_torchscript(net_input, is_train)
 
     @torch.jit.unused
-    def forward_non_torchscript(self, net_input: Dict[str, Tensor]):
+    def forward_non_torchscript(self, net_input: Dict[str, Tensor], is_train=True):
         encoder_input = {
             k: v for k, v in net_input.items() if k != "prev_output_tokens"
         }
+        encoder_input["is_train"] = is_train
         return self.forward(**encoder_input)
 
     def reorder_encoder_out(self, encoder_out, new_order):

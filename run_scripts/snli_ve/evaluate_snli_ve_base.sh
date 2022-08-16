@@ -3,6 +3,8 @@
 # The port for communication. Note that if you want to run multiple tasks on the same machine,
 # you need to specify different port numbers.
 export MASTER_PORT=7091
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export GPUS_PER_NODE=8
 
 user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
@@ -11,18 +13,18 @@ bpe_dir=../../utils/BPE
 split=test
 
 data=/data/tsk/snli_ve/snli_ve_${split}.tsv
-path=../../checkpoints/snli_ve_base_best.pt
-path=./checkpoints/{15,}_{5e-5,}/checkpoint.best_snli_score_0.8880.pt
+# path=../../checkpoints/snli_ve_base_best.pt
+path=/data/tsk/checkpoints/ofa/{10,}_{5e-5,}/checkpoint.best_snli_score_0.8870.pt
 result_path=../../results/snli_ve
 selected_cols=0,2,3,4,5
 
-CUDA_VISIBLE_DEVICES=1 torchrun \
+python3 -m torch.distributed.launch --nproc_per_node=${GPUS_PER_NODE} --master_port=${MASTER_PORT} \
      ../../evaluate.py \
     ${data} \
     --path=${path} \
     --user-dir=${user_dir} \
     --task=snli_ve \
-    --batch-size=8 \
+    --batch-size=1 \
     --log-format=simple --log-interval=100 \
     --seed=7 \
     --gen-subset=${split} \
