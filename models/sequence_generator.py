@@ -271,7 +271,8 @@ class SequenceGenerator(nn.Module):
         # compute the encoder output for each beam
         with torch.autograd.profiler.record_function("EnsembleModel: forward_encoder"):
             encoder_outs = model.forward_encoder(net_input)
-
+        
+        exit_layer = encoder_outs[0]["exit_layer"]
         # placeholder of indices for bsz * beam_size to hold tokens and accumulative scores
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
         new_order = new_order.to(src_tokens.device).long()
@@ -595,7 +596,7 @@ class SequenceGenerator(nn.Module):
             finalized[sent] = torch.jit.annotate(
                 List[Dict[str, Tensor]], finalized[sent]
             )
-        return finalized
+        return finalized, exit_layer
 
     def _prefix_tokens(
         self, step: int, lprobs, scores, tokens, prefix_tokens, beam_size: int

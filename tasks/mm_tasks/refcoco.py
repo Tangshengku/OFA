@@ -112,7 +112,7 @@ class RefcocoTask(OFATask):
 
         model.eval()
         if self.cfg.eval_acc:
-            hyps, refs = self._inference(self.sequence_generator, sample, model)
+            hyps, refs, layer = self._inference(self.sequence_generator, sample, model)
             hyps = hyps / (self.cfg.num_bins - 1) * self.cfg.max_image_size
             refs = refs / (self.cfg.num_bins - 1) * self.cfg.max_image_size
             hyps[:, ::2] /= sample['w_resize_ratios'].unsqueeze(1)
@@ -148,7 +148,7 @@ class RefcocoTask(OFATask):
             metrics.log_derived("score", compute_score)
 
     def _inference(self, generator, sample, model):
-        gen_out = self.inference_step(generator, [model], sample)
+        gen_out, exit_layer = self.inference_step(generator, [model], sample)
         hyps, refs = [], []
         for i in range(len(gen_out)):
             hyps.append(gen_out[i][0]["tokens"][:-1] - len(self.src_dict) + self.cfg.num_bins)
@@ -157,4 +157,4 @@ class RefcocoTask(OFATask):
             logger.info("example hypothesis: ", hyps[0])
             logger.info("example reference: ", refs[0])
 
-        return torch.stack(hyps, dim=0), torch.stack(refs, dim=0)
+        return torch.stack(hyps, dim=0), torch.stack(refs, dim=0), exit_layer

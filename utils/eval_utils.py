@@ -127,7 +127,7 @@ def eval_refcoco(task, generator, models, sample, **kwargs):
         ious = area_interacts / (area_predictions + area_targets - area_interacts + 1e-6)
         return ((ious >= thresh) & (interacts_w > 0) & (interacts_h > 0)).float()
 
-    gen_out = task.inference_step(generator, models, sample)
+    gen_out, exit_layer = task.inference_step(generator, models, sample)
     hyps = []
     for i in range(len(gen_out)):
         hyps.append(gen_out[i][0]["tokens"][:-1] - len(task.src_dict) + task.cfg.num_bins)
@@ -142,7 +142,7 @@ def eval_refcoco(task, generator, models, sample, **kwargs):
         for i, sample_id in enumerate(sample["id"].tolist())
     ]
     scores = _calculate_ap_score(hyps, sample['region_coords'].float())
-    return results, scores
+    return results, scores, exit_layer
 
 
 def eval_snli_ve(task, generator, models, sample, **kwargs):

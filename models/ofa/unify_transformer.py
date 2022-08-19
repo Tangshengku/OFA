@@ -601,7 +601,7 @@ class TransformerEncoder(FairseqEncoder):
             image_x = self.dropout_module(image_x)
             if self.quant_noise is not None:
                 image_x = self.quant_noise(image_x)
-            x = torch.cat([image_x, x], dim=1)
+            x = [image_x, x]
             embed = torch.cat([image_embed, embed], dim=1)
 
         if image_embed_2 is not None:
@@ -719,28 +719,32 @@ class TransformerEncoder(FairseqEncoder):
 
         encoder_padding_mask = src_tokens.eq(self.padding_idx)
         if patch_images is not None:
-            encoder_padding_mask = torch.cat([image_padding_mask, encoder_padding_mask], dim=1)
+            encoder_padding_mask_cat = torch.cat([image_padding_mask, encoder_padding_mask], dim=1)
         if patch_images_2 is not None:
             encoder_padding_mask = torch.cat([image_padding_mask_2, encoder_padding_mask], dim=1)
         has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask.any())
 
         pos_embed = self.embed_positions(utils.new_arange(src_tokens))
-        x, encoder_embedding = self.forward_embedding(
+        embed, encoder_embedding = self.forward_embedding(
             src_tokens, image_embed, image_embed_2, token_embeddings,
             pos_embed, image_pos_embed, image_pos_embed_2
         )
+        x = embed[1]
+        image_x = embed[0]
 
         # account for padding while computing the representation
         if has_pads:
             x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
+            image_x = image_x * (1 - image_padding_mask.unsqueeze(-1).type_as(image_x))
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
+        image_x = image_x.transpose(0, 1)
 
         pos_embed = self.pos_ln(pos_embed)
         if patch_images is not None:
             image_pos_embed = self.image_pos_ln(image_pos_embed)
-            pos_embed = torch.cat([image_pos_embed, pos_embed], dim=1)
+            pos_embed_cat = torch.cat([image_pos_embed, pos_embed], dim=1)
         if patch_images_2 is not None:
             image_pos_embed_2 = self.image_pos_ln(image_pos_embed_2)
             pos_embed = torch.cat([image_pos_embed_2, pos_embed], dim=1)
@@ -753,32 +757,71 @@ class TransformerEncoder(FairseqEncoder):
         ).transpose(1, 2)
         abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
 
-        encoder_states = []
+        pos_q = self.pos_q_linear(image_pos_embed).view(
+            image_x.size(1), image_x.size(0), self.num_attention_heads, -1
+        ).transpose(1, 2) * self.pos_scaling
+        pos_k = self.pos_k_linear(image_pos_embed).view(
+            image_x.size(1), image_x.size(0), self.num_attention_heads, -1
+        ).transpose(1, 2)
+        image_abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
 
+        encoder_states = []
+        encoder_states_img = []
+        return_all_hiddens = True
         if return_all_hiddens:
             encoder_states.append(x)
+            encoder_states_img.append(image_x)
 
         # encoder layers
         for idx, layer in enumerate(self.layers):
             self_attn_bias = abs_pos_bias.clone()
-            self_attn_bias[:, :, -src_tokens.size(1):, -src_tokens.size(1):] += self.get_rel_pos_bias(src_tokens, idx)
+            self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
+            # if patch_images_2 is not None:
+            #     self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
+            #         self.get_image_rel_pos_bias(image_position_ids_2, idx)
+            #     self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
+            #         self.get_image_rel_pos_bias(image_position_ids, idx)
+            # elif patch_images is not None:
+            #     image_abs_pos_bias += \
+            #         self.get_image_rel_pos_bias(image_position_ids, idx)
+            self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
+            # image_abs_pos_bias = image_abs_pos_bias.reshape(-1, image_x.size(0), image_x.size(0)
+            x = layer(
+                x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
+            )
+            # similarity = torch.cosine_similarity(F.normalize(x.clone().view(1, -1)), F.normalize(encoder_states[-1].clone().view(1, -1)) )
+            # if similarity > 1:
+            #     break
+            if return_all_hiddens:
+                assert encoder_states is not None
+                encoder_states.append(x)
+        
+        for idx, layer in enumerate(self.layers):
+            self_attn_bias = image_abs_pos_bias.clone()
+            # self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
             if patch_images_2 is not None:
                 self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
                     self.get_image_rel_pos_bias(image_position_ids_2, idx)
                 self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
                     self.get_image_rel_pos_bias(image_position_ids, idx)
             elif patch_images is not None:
-                self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
+                self_attn_bias += \
                     self.get_image_rel_pos_bias(image_position_ids, idx)
-            self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
+            # self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
+            self_attn_bias = image_abs_pos_bias.reshape(-1, image_x.size(0), image_x.size(0))
 
-            x = layer(
-                x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
+            image_x = layer(
+                image_x, encoder_padding_mask=image_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
+            
+            similarity = torch.cosine_similarity(F.normalize(image_x.clone().view(1, -1)), F.normalize(encoder_states_img[-1].clone().view(1, -1)) )
+            if similarity > 0.9:
+                break
             if return_all_hiddens:
-                assert encoder_states is not None
-                encoder_states.append(x)
-
+                assert encoder_states_img is not None
+                encoder_states_img.append(image_x)
+        
+        x = torch.cat([image_x, x])
         if self.layer_norm is not None:
             x = self.layer_norm(x)
 
@@ -788,12 +831,13 @@ class TransformerEncoder(FairseqEncoder):
         # The empty list is equivalent to None.
         return {
             "encoder_out": [x],  # T x B x C
-            "encoder_padding_mask": [encoder_padding_mask],  # B x T
+            "encoder_padding_mask": [encoder_padding_mask_cat],  # B x T
             "encoder_embedding": [],  # B x T x C
             "encoder_states": encoder_states,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
-            "position_embeddings": [pos_embed],  # B x T x C
+            "position_embeddings": [pos_embed_cat],  # B x T x C
+            "exit_layer": [idx + 1]
         }
 
     @torch.jit.export

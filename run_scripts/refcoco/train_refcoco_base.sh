@@ -5,23 +5,24 @@
 export MASTER_PORT=6061
 
 log_dir=./refcoco_logs
-save_dir=./refcoco_checkpoints
+save_dir=/data/tsk/checkpoints/ofa_refcoco
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/refcoco_data
+data_dir=/data/tsk/refcoco
 data=${data_dir}/refcoco_train.tsv,${data_dir}/refcoco_val.tsv
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,4,2,3
 
+experiments=finetune_decompose
 task=refcoco
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.1
 lr=3e-5
-max_epoch=5
+max_epoch=10
 warmup_ratio=0.06
 batch_size=4
 update_freq=8
@@ -42,11 +43,11 @@ for max_epoch in {10,}; do
     for patch_image_size in {512,}; do
       echo "patch_image_size "${patch_image_size}
 
-      log_file=${log_dir}/${max_epoch}"_"${lr}"_"${patch_image_size}".log"
-      save_path=${save_dir}/${max_epoch}"_"${lr}"_"${patch_image_size}
+      log_file=${log_dir}/${experiments}"_"${lr}"_"${patch_image_size}".log"
+      save_path=${save_dir}/${experiments}"_"${lr}"_"${patch_image_size}
       mkdir -p $save_path
 
-      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=7 --master_port=${MASTER_PORT} ../../train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
@@ -74,7 +75,7 @@ for max_epoch in {10,}; do
           --attention-dropout=${attention_dropout} \
           --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
           --lr-scheduler=polynomial_decay --lr=${lr} \
-          --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
+          --max-epoch=10 --warmup-ratio=${warmup_ratio} \
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
@@ -92,7 +93,7 @@ for max_epoch in {10,}; do
           --scale-heads \
           --disable-entangle \
           --num-bins=${num_bins} \
-          --patch-image-size=${patch_image_size} \
+          --patch-image-size=512 \
           --fp16 \
           --fp16-scale-window=512 \
           --num-workers=0 > ${log_file} 2>&1
