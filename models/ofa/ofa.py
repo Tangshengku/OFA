@@ -121,7 +121,7 @@ class OFAModel(TransformerModel):
                     x = head(sentence_representation)
                     break
 
-        return x, extra
+        return x, extra, encoder_out["encoder_states"]
 
     def register_embedding_tokens(self, ans2label_dict, src_dict, bpe):
         """Register embedding tokens"""

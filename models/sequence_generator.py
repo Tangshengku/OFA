@@ -272,7 +272,7 @@ class SequenceGenerator(nn.Module):
         with torch.autograd.profiler.record_function("EnsembleModel: forward_encoder"):
             encoder_outs = model.forward_encoder(net_input)
         
-        exit_layer = encoder_outs[0]["exit_layer"]
+        encoder_exit_layer = encoder_outs[0]["exit_layer"]
         # placeholder of indices for bsz * beam_size to hold tokens and accumulative scores
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
         new_order = new_order.to(src_tokens.device).long()
@@ -333,6 +333,7 @@ class SequenceGenerator(nn.Module):
         else:
             original_batch_idxs = torch.arange(0, bsz).type_as(tokens)
 
+        decoder_exit_layers = []
         for step in range(max_len + 1):  # one extra step for EOS marker
             # reorder decoder internal states based on the prev choice of beams
             if reorder_state is not None:
@@ -350,7 +351,7 @@ class SequenceGenerator(nn.Module):
                     encoder_outs, reorder_state
                 )
             with torch.autograd.profiler.record_function("EnsembleModel: forward_decoder"):
-                lprobs, avg_attn_scores = model.forward_decoder(
+                lprobs, avg_attn_scores, decoder_exit_layer = model.forward_decoder(
                     tokens[:, : step + 1],
                     encoder_outs,
                     incremental_states,
@@ -362,6 +363,7 @@ class SequenceGenerator(nn.Module):
                     zero_shot=self.zero_shot,
                     prefix_tokens=prefix_tokens
                 )
+                decoder_exit_layers.append(decoder_exit_layer)
 
             if self.lm_model is not None:
                 lm_out = self.lm_model(tokens[:, : step + 1])
@@ -596,7 +598,7 @@ class SequenceGenerator(nn.Module):
             finalized[sent] = torch.jit.annotate(
                 List[Dict[str, Tensor]], finalized[sent]
             )
-        return finalized, exit_layer
+        return finalized, encoder_exit_layer, sum(decoder_exit_layers)/len(decoder_exit_layers)
 
     def _prefix_tokens(
         self, step: int, lprobs, scores, tokens, prefix_tokens, beam_size: int
@@ -841,6 +843,7 @@ class EnsembleModel(nn.Module):
                 if isinstance(decoder_out[1], Tensor):
                     attn = decoder_out[1]
                 else:
+                    decoder_exit_layer = decoder_out[1]["exit_layer"]
                     attn_holder = decoder_out[1]["attn"]
                     if isinstance(attn_holder, Tensor):
                         attn = attn_holder
@@ -890,7 +893,7 @@ class EnsembleModel(nn.Module):
                 probs[:, :, constraint_end:] = -math.inf
             probs = probs[:, -1, :]
             if self.models_size == 1:
-                return probs, attn
+                return probs, attn, decoder_exit_layer
 
             log_probs.append(probs)
             if attn is not None:
@@ -905,7 +908,7 @@ class EnsembleModel(nn.Module):
 
         if avg_attn is not None:
             avg_attn.div_(self.models_size)
-        return avg_probs, avg_attn
+        return avg_probs, avg_attn, decoder_exit_layer
 
     @torch.jit.export
     def reorder_encoder_out(

@@ -7,18 +7,18 @@ export MASTER_PORT=1091
 user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
 
-data=../../dataset/caption_data/caption_test.tsv
-path=../../checkpoints/caption_base_best.pt
+data=/data/tsk/caption_data/caption_test.tsv
+path=/data/tsk/checkpoints/stage2_checkpoints/decompose_{3,}/checkpoint.best_cider_1.4390.pt
 result_path=../../results/caption
 selected_cols=1,4,2
 split='test'
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../evaluate.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../evaluate.py \
     ${data} \
     --path=${path} \
     --user-dir=${user_dir} \
     --task=caption \
-    --batch-size=16 \
+    --batch-size=1 \
     --log-format=simple --log-interval=10 \
     --seed=7 \
     --gen-subset=${split} \
@@ -30,4 +30,4 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 python3 -m torch.distributed.launch --nproc_per_nod
     --num-workers=0 \
     --model-overrides="{\"data\":\"${data}\",\"bpe_dir\":\"${bpe_dir}\",\"eval_cider\":False,\"selected_cols\":\"${selected_cols}\"}"
 
-python coco_eval.py ../../results/caption/test_predict.json ../../dataset/caption_data/test_caption_coco_format.json
+# python coco_eval.py ../../results/caption/test_predict.json /data/tsk/caption_data/test_caption_coco_format.json

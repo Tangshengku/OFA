@@ -6,3 +6,6 @@ checkpoints
 results
 logs
 refcoco_logs
+stage1_logs
+stage2_logs
+vqa_logs

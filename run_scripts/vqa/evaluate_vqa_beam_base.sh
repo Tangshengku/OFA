@@ -8,22 +8,22 @@ user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
 
 # val or test
-split=$1
+split=$test
 
-data=../../dataset/vqa_data/vqa_${split}.tsv
-ans2label_file=../../dataset/vqa_data/trainval_ans2label.pkl
-path=../../checkpoints/vqa_base_best.pt
+data=/data/tsk/vqa_data/vqa_test.tsv
+ans2label_file=/data/tsk/vqa_data/trainval_ans2label.pkl
+path=/data/tsk/checkpoints/ofa_vqa_checkpoints/decompose_{0.04,}_{5e-5,}_{480,}/checkpoint_best.pt
 result_path=../../results/vqa_${split}_beam
 selected_cols=0,5,2,3,4
-valid_batch_size=20
+valid_batch_size=1
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../evaluate.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7,8 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../evaluate.py \
     ${data} \
     --path=${path} \
     --user-dir=${user_dir} \
     --task=vqa_gen \
-    --batch-size=16 \
-    --log-format=simple --log-interval=10 \
+    --batch-size=1 \
+    --log-format=simple --log-interval=1000 \
     --seed=7 \
     --gen-subset=${split} \
     --results-path=${result_path} \

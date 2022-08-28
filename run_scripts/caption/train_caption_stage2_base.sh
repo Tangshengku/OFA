@@ -5,17 +5,18 @@
 export MASTER_PORT=1062
 
 log_dir=./stage2_logs
-save_dir=./stage2_checkpoints
+save_dir=/data/tsk/checkpoints/stage2_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/caption_data
+data_dir=/data/tsk/caption_data
 data=${data_dir}/caption_stage2_train.tsv,${data_dir}/caption_val.tsv
-restore_file=../../checkpoints/caption_stage1_base_best.pt
+restore_file=/data/tsk/checkpoints/stage1_checkpoints/decompose_{0.06,}_{6000,}/checkpoint.best_cider_1.3350.pt
 selected_cols=1,4,2
 
+experments=decompose
 task=caption
 arch=ofa_base
 criterion=scst_reward_criterion
@@ -23,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=2
+batch_size=1
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.0
@@ -42,8 +43,8 @@ for lr in {1e-5,}; do
   for max_epoch in {3,}; do
     echo "max_epoch "${max_epoch}
 
-    log_file=${log_dir}/${lr}"_"${max_epoch}".log"
-    save_path=${save_dir}/${lr}"_"${max_epoch}
+    log_file=${log_dir}/${experments}"_"${max_epoch}".log"
+    save_path=${save_dir}/${experments}"_"${max_epoch}
     mkdir -p $save_path
 
     CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
@@ -64,6 +65,7 @@ for lr in {1e-5,}; do
         --share-decoder-input-output-embed \
         --share-all-embeddings \
         --layernorm-embedding \
+        --freeze-resnet\
         --patch-layernorm-embedding \
         --code-layernorm-embedding \
         --resnet-drop-path-rate=${resnet_drop_path_rate} \
@@ -72,8 +74,8 @@ for lr in {1e-5,}; do
         --dropout=${dropout} \
         --attention-dropout=${attention_dropout} \
         --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
-        --lr-scheduler=polynomial_decay --lr=${lr} \
-        --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
+        --lr-scheduler=polynomial_decay --lr=1e-5 \
+        --max-epoch=3 --warmup-ratio=${warmup_ratio} \
         --log-format=simple --log-interval=10 \
         --fixed-validation-seed=7 \
         --no-epoch-checkpoints --keep-best-checkpoints=1 \

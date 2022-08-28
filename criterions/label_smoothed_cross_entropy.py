@@ -14,6 +14,7 @@ from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 from omegaconf import II
+from torch.nn import MSELoss
 
 
 @dataclass
@@ -261,8 +262,32 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             constraint_start=self.constraint_start,
             constraint_end=self.constraint_end
         )
+        loss += self.compute_self_distill_loss(net_output)
         return loss, nll_loss, ntokens
 
+    def compute_self_distill_loss(self, net_output):
+        mse_loss = MSELoss()
+        
+        encoder_txt_states, encoder_img_states = net_output[2]
+        encoder_txt_states = encoder_txt_states[1:]
+        encoder_img_states = encoder_img_states[1:]
+
+        decoder_states = net_output[1]["inner_states"]
+
+        decoder_final_state = decoder_states[-1]
+        encoder_final_img_state = encoder_img_states[-1]
+        encoder_final_txt_state = encoder_txt_states[-1]
+        
+        loss = 0.0
+        #for decoder loss
+        for imgstate, txtstate in zip(encoder_img_states[:-1], encoder_txt_states[:-1]):
+            loss += mse_loss(imgstate, encoder_final_img_state)
+            loss += mse_loss(txtstate, encoder_final_txt_state)
+        for decoder_state in decoder_states[:-1]:
+            loss += mse_loss(decoder_state, decoder_final_state)
+        return loss
+
+        
     def compute_accuracy(self, model, net_output, sample):
         lprobs, target = self.get_lprobs_and_target(model, net_output, sample)
         mask = target.ne(self.padding_idx)

@@ -429,7 +429,7 @@ class TransformerDecoderLayer(nn.Module):
         else:
             y = x
 
-        x, attn = self.self_attn(
+        x, attn, self_attn_saved_state = self.self_attn(
             query=x,
             key=y,
             value=y,
@@ -461,7 +461,7 @@ class TransformerDecoderLayer(nn.Module):
                 assert incremental_state is not None
                 self.encoder_attn._set_input_buffer(incremental_state, saved_state)
 
-            x, attn = self.encoder_attn(
+            x, attn, enc_attn_saved_state = self.encoder_attn(
                 query=x,
                 key=encoder_out,
                 value=encoder_out,
@@ -506,7 +506,7 @@ class TransformerDecoderLayer(nn.Module):
             else:
                 self_attn_state = [saved_state["prev_key"], saved_state["prev_value"]]
             return x, attn, self_attn_state
-        return x, attn, None
+        return x, attn, [self_attn_saved_state, enc_attn_saved_state]
 
     def make_generation_fast_(self, need_attn: bool = False, **kwargs):
         self.need_attn = need_attn

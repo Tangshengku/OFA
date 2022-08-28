@@ -8,10 +8,10 @@ user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
 
 # dev or test
-split=$1
+split=test
 
-data=../../dataset/snli_ve_data/snli_ve_${split}.tsv
-path=../../checkpoints/snli_ve_base_best.pt
+data=/data/tsk/snli_ve/snli_ve_${split}.tsv
+path=/data/tsk/checkpoints/ofa_snli_ve/decompose_{5e-5,}/checkpoint.best_snli_score_0.8930.pt
 result_path=../../results/snli_ve
 selected_cols=0,2,3,4,5
 
@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc
     --path=${path} \
     --user-dir=${user_dir} \
     --task=snli_ve \
-    --batch-size=8 \
+    --batch-size=1 \
     --log-format=simple --log-interval=10 \
     --seed=7 \
     --gen-subset=${split} \

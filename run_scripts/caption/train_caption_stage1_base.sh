@@ -5,17 +5,18 @@
 export MASTER_PORT=1061
 
 log_dir=./stage1_logs
-save_dir=./stage1_checkpoints
+save_dir=/data/tsk/checkpoints/stage1_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/caption_data
+data_dir=/data/tsk/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,4,2
 
+experiments=decompose
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -23,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=8
+batch_size=4
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -44,11 +45,11 @@ for max_epoch in {5,}; do
     for drop_worst_after in {6000,}; do
       echo "drop_worst_after "${drop_worst_after}
 
-      log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}".log"
-      save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}
+      log_file=${log_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}".log"
+      save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}
       mkdir -p $save_path
 
-      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
@@ -76,12 +77,12 @@ for max_epoch in {5,}; do
           --attention-dropout=${attention_dropout} \
           --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
           --lr-scheduler=polynomial_decay --lr=${lr} \
-          --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
+          --max-epoch=5 --warmup-ratio=0.06 \
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
           --save-interval=1 --validate-interval=1 \
-          --save-interval-updates=500 --validate-interval-updates=500 \
+          --save-interval-updates=500 --validate-interval-updates=1000 \
           --eval-cider \
           --eval-cider-cached-tokens=${eval_cider_cached} \
           --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \
@@ -99,7 +100,7 @@ for max_epoch in {5,}; do
           --num-bins=${num_bins} \
           --patch-image-size=${patch_image_size} \
           --drop-worst-ratio=${drop_worst_ratio} \
-          --drop-worst-after=${drop_worst_after} \
+          --drop-worst-after=6000 \
           --fp16 \
           --fp16-scale-window=512 \
           --num-workers=0 > ${log_file} 2>&1

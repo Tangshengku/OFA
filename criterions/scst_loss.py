@@ -146,7 +146,7 @@ class ScstRewardCriterion(FairseqCriterion):
         model.eval()
         with torch.no_grad():
             self.task.scst_generator.model.eval()
-            gen_out = self.task.scst_generator.generate([model], sample)
+            gen_out, layer = self.task.scst_generator.generate([model], sample)
 
         gen_target = []
         gen_res = []

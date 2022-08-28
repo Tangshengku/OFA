@@ -10,29 +10,30 @@
 # Number of GPUs per GPU worker
 GPUS_PER_NODE=8 
 # Number of GPU workers, for single-worker training, please set to 1
-WORKER_CNT=4 
+WORKER_CNT=1
 # The ip address of the rank-0 worker, for single-worker training, please set to localhost
-export MASTER_ADDR=XX.XX.XX.XX
+export MASTER_ADDR=localhost
 # The port for communication
 export MASTER_PORT=8314
 # The rank of this worker, should be in {0, ..., WORKER_CNT-1}, for single-worker training, please set to 0
 export RANK=0 
 
-data_dir=../../dataset/vqa_data
+data_dir=/data/tsk/vqa_data
 data=${data_dir}/vqa_train.tsv,${data_dir}/vqa_val.tsv
 # Note: If you have shuffled the data in advance, please uncomment the line below.
 # data=${data_dir}/vqa_train_1.tsv,${data_dir}/vqa_train_2.tsv,${data_dir}/vqa_train_3.tsv,${data_dir}/vqa_train_4.tsv,${data_dir}/vqa_train_5.tsv,${data_dir}/vqa_train_6.tsv,${data_dir}/vqa_train_7.tsv,${data_dir}/vqa_train_8.tsv,${data_dir}/vqa_train_9.tsv,${data_dir}/vqa_train_10.tsv,${data_dir}/vqa_val.tsv
-ans2label_file=../../dataset/vqa_data/trainval_ans2label.pkl
+ans2label_file=/data/tsk/vqa_data/trainval_ans2label.pkl
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,5,2,3,4
 
 log_dir=./vqa_logs
-save_dir=./vqa_checkpoints
+save_dir=/data/tsk/checkpoints/ofa_vqa_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
+experiments=decompose
 task=vqa_gen
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -69,8 +70,8 @@ for max_epoch in {15,}; do
       for patch_image_size in {480,}; do
         echo "patch_image_size "${patch_image_size}
 
-        log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${lr}"_"${patch_image_size}"_rank"${RANK}".log"
-        save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${lr}"_"${patch_image_size}
+        log_file=${log_dir}/${experiments}"_"${warmup_ratio}"_"${lr}"_"${patch_image_size}"_rank"${RANK}".log"
+        save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${lr}"_"${patch_image_size}
         mkdir -p $save_path
 
         python3 -m torch.distributed.launch --nproc_per_node=${GPUS_PER_NODE} --nnodes=${WORKER_CNT} --node_rank=${RANK} --master_addr=${MASTER_ADDR} --master_port=${MASTER_PORT} ../../train.py \
@@ -105,9 +106,9 @@ for max_epoch in {15,}; do
             --adam-eps=1e-08 \
             --clip-norm=1.0 \
             --lr-scheduler=polynomial_decay \
-            --lr=${lr} \
-            --max-epoch=${max_epoch} \
-            --warmup-ratio=${warmup_ratio} \
+            --lr=5e-5 \
+            --max-epoch=15 \
+            --warmup-ratio=0.04 \
             --log-format=simple \
             --log-interval=10 \
             --fixed-validation-seed=7 \
@@ -128,7 +129,7 @@ for max_epoch in {15,}; do
             --scale-heads \
             --disable-entangle \
             --num-bins=${num_bins} \
-            --patch-image-size=${patch_image_size} \
+            --patch-image-size=480 \
             --prompt-type=prev_output \
             --fp16 \
             --fp16-scale-window=512 \

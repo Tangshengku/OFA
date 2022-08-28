@@ -5,17 +5,18 @@
 export MASTER_PORT=7061
 
 log_dir=./logs
-save_dir=./checkpoints
+save_dir=/data/tsk/checkpoints/ofa_snli_ve
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/snli_ve_data
+data_dir=/data/tsk/snli_ve
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,2,3,4,5
 
+experiments=encoder_decompose_imitate
 task=snli_ve
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -23,7 +24,7 @@ label_smoothing=0.0
 lr=3e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=4
+batch_size=2
 update_freq=8
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -41,8 +42,8 @@ for max_epoch in {5,}; do
   for lr in {5e-5,}; do
     echo "lr "${lr}
 
-    log_file=${log_dir}/${max_epoch}"_"${lr}".log"
-    save_path=${save_dir}/${max_epoch}"_"${lr}
+    log_file=${log_dir}/${experiments}"_"${lr}".log"
+    save_path=${save_dir}/${experiments}"_"${lr}
     mkdir -p $save_path
 
     CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
@@ -72,8 +73,8 @@ for max_epoch in {5,}; do
         --dropout=${dropout} \
         --attention-dropout=${attention_dropout} \
         --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
-        --lr-scheduler=polynomial_decay --lr=${lr} \
-        --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
+        --lr-scheduler=polynomial_decay --lr=5e-5 \
+        --max-epoch=5 --warmup-ratio=${warmup_ratio} \
         --log-format=simple --log-interval=10 \
         --fixed-validation-seed=7 \
         --keep-best-checkpoints=1 \

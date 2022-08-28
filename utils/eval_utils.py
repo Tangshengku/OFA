@@ -34,24 +34,24 @@ def decode_fn(x, tgt_dict, bpe, generator, tokenizer=None):
 
 def eval_caption(task, generator, models, sample, **kwargs):
     transtab = str.maketrans({key: None for key in string.punctuation})
-    hypos = task.inference_step(generator, models, sample)
+    hypos, encoder_layer, decoder_layer = task.inference_step(generator, models, sample)
     results = []
     for i, sample_id in enumerate(sample["id"].tolist()):
         detok_hypo_str = decode_fn(hypos[i][0]["tokens"], task.tgt_dict, task.bpe, generator)
         results.append({"image_id": str(sample_id), "caption": detok_hypo_str.translate(transtab).strip()})
-    return results, None
+    return results, None, encoder_layer[0], encoder_layer[1], decoder_layer
 
 
 def eval_vqa_gen(task, generator, models, sample, **kwargs):
     if kwargs['beam_search_vqa_eval']:
-        hypos = task.inference_step(generator, models, sample, prefix_tokens=sample['prefix_tokens'])
+        hypos, layer = task.inference_step(generator, models, sample, prefix_tokens=sample['prefix_tokens'])
         results = []
         for i, sample_id in enumerate(sample["id"].tolist()):
             prefix_len = sample['prefix_tokens'][i].ne(1).sum().item()
             detok_hypo_str = decode_fn(hypos[i][0]["tokens"][prefix_len:], task.tgt_dict, task.bpe, generator)
             results.append({"question_id": int(sample_id), "answer": detok_hypo_str.strip()})
         scores = [ref_dict.get(result['answer'], 0) for ref_dict, result in zip(sample['ref_dict'], results)]
-        return results, scores
+        return results, scores, layer[0]
 
     encoder_out = models[0].encoder(
         sample["net_input"]["src_tokens"],
@@ -152,6 +152,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         patch_images=sample["net_input"]["patch_images"],
         patch_masks=sample["net_input"]["patch_masks"]
     )
+    encoder_layer = encoder_out["exit_layer"]
     device = sample["net_input"]["src_tokens"].device
     eos_item = torch.tensor([task.src_dict.eos()])
     pad = task.src_dict.pad()
@@ -189,6 +190,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         ]
 
         decoder_out = models[0].decoder(valid_prev_output, encoder_out=new_encoder_out)
+        decoder_layer = decoder_out[1]["exit_layer"]
         decoder_out[0].masked_fill_(~valid_constraint_masks, -math.inf)
         lprobs = models[0].get_normalized_probs(decoder_out, log_probs=True)
         scores = lprobs.gather(dim=-1, index=valid_tgt.unsqueeze(-1)).squeeze(-1)
@@ -202,7 +204,7 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
     hyps = [task.index2ans[predict_index] for predict_index in predicts]
     results = [{"uniq_id": id, "answer": hyp} for id, hyp in zip(sample["id"].tolist(), hyps)]
     scores = [ref_dict.get(hyp, 0) for ref_dict, hyp in zip(sample['ref_dict'], hyps)]
-    return results, scores
+    return results, scores, encoder_layer[0], encoder_layer[1], decoder_layer
 
 
 def eval_image_gen(task, generator, models, sample, **kwargs):

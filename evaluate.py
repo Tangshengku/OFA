@@ -54,9 +54,10 @@ def main(cfg: DictConfig, **kwargs):
 
     if use_cuda:
         torch.cuda.set_device(cfg.distributed_training.device_id)
+    overrides = {"data":"/data/tsk/caption_data/caption_test.tsv","bpe_dir":"./utils/BPE","selected_cols":"1,4,2"}
 
     # Load ensemble
-    overrides = eval(cfg.common_eval.model_overrides)
+    # overrides = eval(cfg.common_eval.model_overrides)
     # Deal with beam-search / all-candidate VQA eval
     if cfg.task._name == "vqa_gen":
         overrides['val_inference_type'] = "beamsearch" if kwargs['beam_search_vqa_eval'] else "allcand"
@@ -123,7 +124,9 @@ def main(cfg: DictConfig, **kwargs):
     generator = task.build_generator(models, cfg.generation)
 
     results = []
-    exit_layers = 0.0
+    encoder_exit_layers = []
+    encoder_txt_exit_layers = []
+    decoder_exit_layers = []
     score_sum = torch.FloatTensor([0]).cuda()
     score_cnt = torch.FloatTensor([0]).cuda()
     for sample in progress:
@@ -132,13 +135,18 @@ def main(cfg: DictConfig, **kwargs):
         sample = utils.move_to_cuda(sample) if use_cuda else sample
         sample = utils.apply_to_sample(apply_half, sample) if cfg.common.fp16 else sample
         with torch.no_grad():
-            result, scores, exit_layer = eval_step(task, generator, models, sample, **kwargs)
+            result, scores, exit_layer, txt_exit_layer, decoder_layer = eval_step(task, generator, models, sample, **kwargs)
         results += result
-        exit_layers += exit_layer[0]
+        encoder_exit_layers.append(exit_layer)
+        decoder_exit_layers.append(decoder_layer)
+        encoder_txt_exit_layers.append(txt_exit_layer)
         score_sum += sum(scores) if scores is not None else 0
         score_cnt += len(scores) if scores is not None else 0
         progress.log({"sentences": sample["nsentences"]})
-    print("exit layer: {}", exit_layers/score_cnt)
+    print("encoder txt exit layer: {}", sum(encoder_txt_exit_layers)/len(encoder_txt_exit_layers))
+    print("encoder img exit layer: {}", sum(encoder_exit_layers)/len(encoder_exit_layers))
+    print("decoder exit layer: {}", sum(decoder_exit_layers)/len(decoder_exit_layers))
+
 
     merge_results(task, cfg, logger, score_cnt, score_sum, results)
 

@@ -80,6 +80,18 @@ def make_image_bucket_position(bucket_size, num_relative_distance):
     relative_position_index[0, 0] = num_relative_distance - 1
     return relative_position_index
 
+class ImitationNet(nn.Module): 
+    def __init__(self, hidden_size):
+        super().__init__()
+        # self.weight = nn.Parameter(torch.zeros(config.n_layer, config.n_embd, config.n_embd).
+        #                            normal_(mean=0.0, std=config.initializer_range))
+        # self.bias = nn.Parameter(torch.zeros(config.n_layer, config.n_embd))
+        self.linear = nn.Linear(hidden_size, hidden_size)
+        # self.act = nn.Tanh()
+
+    def forward(self, hidden_representation):
+        approximate_representation = self.linear(hidden_representation)
+        return approximate_representation
 
 @register_model("unify_transformer")
 class TransformerModel(FairseqEncoderDecoderModel):
@@ -410,6 +422,8 @@ class TransformerEncoder(FairseqEncoder):
         self.padding_idx = embed_tokens.padding_idx
         self.max_source_positions = args.max_source_positions
         self.num_attention_heads = args.encoder_attention_heads
+        self.txt_imitate = ImitationNet(embed_dim)
+        self.image_imitate = ImitationNet(embed_dim)
 
         self.embed_tokens = embed_tokens
 
@@ -501,6 +515,12 @@ class TransformerEncoder(FairseqEncoder):
         self.register_buffer("token_rp_bucket", token_rp_bucket)
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.entangle_position_embedding = args.entangle_position_embedding
+        # self.freeze_param()
+    
+    def freeze_param(self):
+        for name, param in self.named_parameters():
+            if "imitate" not in name:
+                param.requires_grad_ = False
 
     def build_encoder_layer(self, args, drop_path_rate=0.0):
         layer = TransformerEncoderLayer(args, drop_path_rate=drop_path_rate)
@@ -789,13 +809,15 @@ class TransformerEncoder(FairseqEncoder):
             x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
-            # similarity = torch.cosine_similarity(F.normalize(x.clone().view(1, -1)), F.normalize(encoder_states[-1].clone().view(1, -1)) )
-            # if similarity > 1:
-            #     break
+            # x_imitate = self.txt_imitate(x)
+            x_imitate = x
+            similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states[-1].clone().contiguous().view(1, -1)) )
+            if similarity > 1:
+                break
             if return_all_hiddens:
                 assert encoder_states is not None
-                encoder_states.append(x)
-        
+                encoder_states.append(x_imitate)
+        idx_y = idx
         for idx, layer in enumerate(self.layers):
             self_attn_bias = image_abs_pos_bias.clone()
             # self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
@@ -813,15 +835,16 @@ class TransformerEncoder(FairseqEncoder):
             image_x = layer(
                 image_x, encoder_padding_mask=image_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
             )
-            
-            similarity = torch.cosine_similarity(F.normalize(image_x.clone().view(1, -1)), F.normalize(encoder_states_img[-1].clone().view(1, -1)) )
-            if similarity > 0.9:
+            # image_x_imitate = self.image_imitate(image_x)
+            image_x_imitate = image_x
+            similarity = torch.cosine_similarity(F.normalize(image_x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states_img[-1].clone().contiguous().view(1, -1)) )
+            if similarity > 1:
                 break
             if return_all_hiddens:
                 assert encoder_states_img is not None
-                encoder_states_img.append(image_x)
+                encoder_states_img.append(image_x_imitate)
         
-        x = torch.cat([image_x, x])
+        x = torch.cat([image_x_imitate, x_imitate])
         if self.layer_norm is not None:
             x = self.layer_norm(x)
 
@@ -833,11 +856,11 @@ class TransformerEncoder(FairseqEncoder):
             "encoder_out": [x],  # T x B x C
             "encoder_padding_mask": [encoder_padding_mask_cat],  # B x T
             "encoder_embedding": [],  # B x T x C
-            "encoder_states": encoder_states,  # List[T x B x C]
+            "encoder_states": [encoder_states, encoder_states_img],  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
             "position_embeddings": [pos_embed_cat],  # B x T x C
-            "exit_layer": [idx + 1]
+            "exit_layer": [idx + 1, idx_y + 1]
         }
 
     @torch.jit.export
@@ -884,16 +907,20 @@ class TransformerEncoder(FairseqEncoder):
         else:
             new_position_embeddings = [(encoder_out["position_embeddings"][0]).index_select(0, new_order)]
 
-        encoder_states = encoder_out["encoder_states"]
-        if len(encoder_states) > 0:
-            for idx, state in enumerate(encoder_states):
-                encoder_states[idx] = state.index_select(1, new_order)
+        encoder_states_txt, encoder_states_img  = encoder_out["encoder_states"]
+        if len(encoder_states_txt) > 0:
+            for idx, state in enumerate(encoder_states_txt):
+                encoder_states_txt[idx] = state.index_select(1, new_order)
+        if len(encoder_states_img) > 0:
+            for idx, state in enumerate(encoder_states_img):
+                encoder_states_img[idx] = state.index_select(1, new_order)
+
 
         return {
             "encoder_out": new_encoder_out,  # T x B x C
             "encoder_padding_mask": new_encoder_padding_mask,  # B x T
             "encoder_embedding": new_encoder_embedding,  # B x T x C
-            "encoder_states": encoder_states,  # List[T x B x C]
+            "encoder_states": [encoder_states_txt, encoder_states_img],  # List[T x B x C]
             "src_tokens": new_src_tokens,  # B x T
             "src_lengths": new_src_lengths,  # B x 1
             "position_embeddings": new_position_embeddings,  # B x T x C
@@ -989,6 +1016,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.max_target_positions = args.max_target_positions
 
         self.embed_tokens = embed_tokens
+        self.imitate_layer = ImitationNet(embed_dim)
 
         self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
 
@@ -1358,7 +1386,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if incremental_state is not None:
                 self_attn_bias = self_attn_bias[:, -1:, :]
 
-            x, layer_attn, _ = layer(
+            x, layer_attn, saved_states = layer(
                 x,
                 enc,
                 padding_mask,
@@ -1370,10 +1398,18 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self_attn_bias=self_attn_bias,
                 cross_attn_bias=cross_abs_pos_bias
             )
-            inner_states.append(x)
+            # x_imitate = self.imitate_layer(x)
+            x_imitate = x
+            similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
+            if similarity > 1:
+                for i in range(idx + 1, len(self.layers)):
+                    self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
+                    self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
+                break
+            inner_states.append(x_imitate)
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
-
+        x = x_imitate
         if attn is not None:
             if alignment_heads is not None:
                 attn = attn[:alignment_heads]
@@ -1390,7 +1426,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
 
-        return x, {"attn": [attn], "inner_states": inner_states}
+        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx + 1}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""
