@@ -4,6 +4,7 @@
 # found in the LICENSE file in the root directory.
 
 from typing import Dict, List, Optional
+from zlib import Z_BEST_COMPRESSION
 
 import torch
 import torch.nn as nn
@@ -132,8 +133,17 @@ class TransformerEncoderLayer(nn.Module):
             scale_heads=getattr(args, 'scale_heads', False)
         )
 
-    def residual_connection(self, x, residual):
-        return residual + self.drop_path(x)
+    def residual_connection(self, x, residual, w):
+        # z = w[:,1].unsqueeze(0).unsqueeze(2).expand(x.shape[0], w.shape[1], x.shape[2])
+        # print("x shape", z[:,1,:])
+        # print(w.shape)
+        if w != None:
+            if len(w.shape) == 1:
+                w = w.unsqueeze(0)
+            residual = residual + w[:,1].unsqueeze(0).unsqueeze(2).expand(x.shape[0], x.shape[1], x.shape[2])*self.drop_path(x)
+        else:
+            residual = residual + self.drop_path(x)
+        return residual
 
     def upgrade_state_dict_named(self, state_dict, name):
         """
@@ -163,7 +173,8 @@ class TransformerEncoderLayer(nn.Module):
         x,
         encoder_padding_mask: Optional[Tensor],
         attn_mask: Optional[Tensor] = None,
-        self_attn_bias: Optional[Tensor] = None
+        self_attn_bias: Optional[Tensor] = None,
+        w: Optional[Tensor] = None,
     ):
         """
         Args:
@@ -194,7 +205,7 @@ class TransformerEncoderLayer(nn.Module):
         residual = x
         if self.normalize_before:
             x = self.self_attn_layer_norm(x)
-        x, _ = self.self_attn(
+        x, _, _ = self.self_attn(
             query=x,
             key=x,
             value=x,
@@ -206,7 +217,7 @@ class TransformerEncoderLayer(nn.Module):
         if self.attn_ln is not None:
             x = self.attn_ln(x)
         x = self.dropout_module(x)
-        x = self.residual_connection(x, residual)
+        x = self.residual_connection(x, residual, w)
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
@@ -221,7 +232,7 @@ class TransformerEncoderLayer(nn.Module):
         x = self.dropout_module(x)
         if self.w_resid is not None:
             residual = torch.mul(self.w_resid, residual)
-        x = self.residual_connection(x, residual)
+        x = self.residual_connection(x, residual, w)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
         return x

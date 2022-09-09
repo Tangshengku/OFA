@@ -8,7 +8,7 @@
 # To use the shuffled data (if exists), please uncomment the Line 24.
 
 # Number of GPUs per GPU worker
-GPUS_PER_NODE=8 
+GPUS_PER_NODE=7
 # Number of GPU workers, for single-worker training, please set to 1
 WORKER_CNT=4 
 # The ip address of the rank-0 worker, for single-worker training, please set to localhost
@@ -17,6 +17,7 @@ export MASTER_ADDR=XX.XX.XX.XX
 export MASTER_PORT=8214
 # The rank of this worker, should be in {0, ..., WORKER_CNT-1}, for single-worker training, please set to 0
 export RANK=0 
+export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
 
 data_dir=../../dataset/vqa_data
 data=${data_dir}/vqa_train.tsv,${data_dir}/vqa_val.tsv

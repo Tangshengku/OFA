@@ -262,7 +262,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             constraint_start=self.constraint_start,
             constraint_end=self.constraint_end
         )
-        loss += self.compute_self_distill_loss(net_output)
+        # loss += self.compute_self_distill_loss(net_output)
         return loss, nll_loss, ntokens
 
     def compute_self_distill_loss(self, net_output):

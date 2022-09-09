@@ -227,7 +227,7 @@ class CaptionTask(OFATask):
                 s = self.bpe.decode(s)
             return s
 
-        gen_out, layer = self.inference_step(generator, [model], sample)
+        gen_out, layer, decoder_layer = self.inference_step(generator, [model], sample)
         hyps, refs = [], []
         transtab = str.maketrans({key: None for key in string.punctuation})
         for i in range(len(gen_out)):

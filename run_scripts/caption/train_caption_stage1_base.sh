@@ -13,10 +13,10 @@ user_dir=../../ofa_module
 
 data_dir=/data/tsk/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=../../checkpoints/ofa_base.pt
+restore_file=/data/tsk/checkpoints/stage1_checkpoints/adaptive_{0.06,}_{6000,}/checkpoint.best_cider_1.2740.pt
 selected_cols=0,4,2
 
-experiments=decompose
+experiments=adaptive
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -49,7 +49,7 @@ for max_epoch in {5,}; do
       save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}
       mkdir -p $save_path
 
-      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6 python3 -m torch.distributed.launch --nproc_per_node=7 --master_port=${MASTER_PORT} ../../train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
@@ -81,7 +81,7 @@ for max_epoch in {5,}; do
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
-          --save-interval=1 --validate-interval=1 \
+          --save-interval=1 --validate-interval=500 \
           --save-interval-updates=500 --validate-interval-updates=1000 \
           --eval-cider \
           --eval-cider-cached-tokens=${eval_cider_cached} \

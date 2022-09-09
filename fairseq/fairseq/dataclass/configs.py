@@ -513,7 +513,7 @@ class DatasetConfig(FairseqDataclass):
         },
     )
     batch_size_valid: Optional[int] = field(
-        default=1,
+        default=4,
         metadata={
             "help": "batch size of the validation batch (defaults to --batch-size)",
             "argparse_alias": "--max-sentences-valid",

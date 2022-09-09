@@ -30,4 +30,4 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc
     --num-workers=0 \
     --model-overrides="{\"data\":\"${data}\",\"bpe_dir\":\"${bpe_dir}\",\"eval_cider\":False,\"selected_cols\":\"${selected_cols}\"}"
 
-# python coco_eval.py ../../results/caption/test_predict.json /data/tsk/caption_data/test_caption_coco_format.json
+python coco_eval.py ../../results/caption/test_predict.json /data/tsk/caption_data/test_caption_coco_format.json
