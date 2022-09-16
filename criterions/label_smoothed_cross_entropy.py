@@ -14,7 +14,7 @@ from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 from omegaconf import II
-from torch.nn import MSELoss
+from torch.nn import MSELoss, CosineEmbeddingLoss
 
 
 @dataclass
@@ -286,6 +286,14 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         for decoder_state in decoder_states[:-1]:
             loss += mse_loss(decoder_state, decoder_final_state)
         return loss
+
+    def compute_cos_similarity_loss(self, net_output):
+        cos_func = CosineEmbeddingLoss()
+        encoder_txt_states, encoder_img_states = net_output[2]
+        encoder_txt_states = encoder_txt_states[1:]
+        encoder_img_states = encoder_img_states[1:]
+        
+
 
         
     def compute_accuracy(self, model, net_output, sample):
