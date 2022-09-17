@@ -302,7 +302,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             loss += cos_func(encoder_txt_states[i], encoder_txt_states[i+1])
         for i in range(0, len(decoder_state), 2):
             loss += cos_func(decoder_state[i], decoder_state[i+1])
-        
+        return loss
             
 
         
