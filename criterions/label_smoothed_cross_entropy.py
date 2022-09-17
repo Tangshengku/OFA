@@ -263,6 +263,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             constraint_end=self.constraint_end
         )
         # loss += self.compute_self_distill_loss(net_output)
+        loss += self.compute_cos_similarity_loss(net_output)
         return loss, nll_loss, ntokens
 
     def compute_self_distill_loss(self, net_output):
@@ -290,8 +291,20 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
     def compute_cos_similarity_loss(self, net_output):
         cos_func = CosineEmbeddingLoss()
         encoder_txt_states, encoder_img_states = net_output[2]
+        decoder_state = net_output[1]["inner_states"]
+
         encoder_txt_states = encoder_txt_states[1:]
         encoder_img_states = encoder_img_states[1:]
+        
+        loss = 0.0
+        for i in range(0, len(encoder_img_states), 2):
+            loss += cos_func(encoder_img_states[i], encoder_img_states[i+1])
+            loss += cos_func(encoder_txt_states[i], encoder_txt_states[i+1])
+        for i in range(0, len(decoder_state), 2):
+            loss += cos_func(decoder_state[i], decoder_state[i+1])
+        
+            
+
         
 
 
