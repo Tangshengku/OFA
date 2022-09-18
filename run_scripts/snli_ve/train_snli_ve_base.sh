@@ -5,15 +5,15 @@
 export MASTER_PORT=7061
 
 log_dir=./logs
-save_dir=/data/tsk/checkpoints/ofa_snli_ve
+save_dir=./checkpoints/ofa_snli_ve
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=/data/tsk/snli_ve
+data_dir=../../alldata/snli_ve
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
-restore_file=/data/tsk/checkpoints/ofa_snli_ve/encoder_adaptive_{5e-5,}/checkpoint.best_snli_score_0.8750.pt
+restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,2,3,4,5
 
 experiments=encoder_adaptive
@@ -21,10 +21,10 @@ task=snli_ve
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.0
-lr=3e-5
+lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=4
+batch_size=16
 update_freq=8
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -46,7 +46,7 @@ for max_epoch in {5,}; do
     save_path=${save_dir}/${experiments}"_"${lr}
     mkdir -p $save_path
 
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
+~/anaconda3/envs/ofa/bin/python3 -m torch.distributed.launch --nnodes=1 --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \
@@ -58,7 +58,7 @@ for max_epoch in {5,}; do
         --arch=${arch} \
         --criterion=${criterion} \
         --label-smoothing=${label_smoothing} \
-        --batch-size=4 \
+        --batch-size=32 \
         --update-freq=${update_freq} \
         --encoder-normalize-before \
         --decoder-normalize-before \

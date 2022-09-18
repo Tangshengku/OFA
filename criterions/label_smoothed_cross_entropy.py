@@ -218,12 +218,13 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
     def get_lprobs_and_target(self, model, net_output, sample):
         conf = sample['conf'][:, None, None] if 'conf' in sample and sample['conf'] is not None else 1
         constraint_masks = None
+        net_output = list(net_output)
         if "constraint_masks" in sample and sample["constraint_masks"] is not None:
             constraint_masks = sample["constraint_masks"]
-            net_output[0].masked_fill_(~constraint_masks, -math.inf)
+            net_output[0] = net_output[0].masked_fill(~constraint_masks, -math.inf)
         if self.constraint_start is not None and self.constraint_end is not None:
-            net_output[0][:, :, 4:self.constraint_start] = -math.inf
-            net_output[0][:, :, self.constraint_end:] = -math.inf
+            net_out[0][:, :, 4:self.constraint_start] = -math.inf
+            net_out[0][:, :, self.constraint_end:] = -math.inf
         lprobs = model.get_normalized_probs(net_output, log_probs=True) * conf
         target = model.get_targets(sample, net_output)
         if self.ignore_prefix_size > 0:
@@ -279,13 +280,14 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         encoder_final_img_state = encoder_img_states[-1]
         encoder_final_txt_state = encoder_txt_states[-1]
         
+        target = torch.ones(encoder_img_states[0].shape[0], device=encoder_img_states[0].device)
         loss = 0.0
         #for decoder loss
         for imgstate, txtstate in zip(encoder_img_states[:-1], encoder_txt_states[:-1]):
-            loss += mse_loss(imgstate, encoder_final_img_state)
-            loss += mse_loss(txtstate, encoder_final_txt_state)
+            loss += mse_loss(imgstate, encoder_final_img_state, target)
+            loss += mse_loss(txtstate, encoder_final_txt_state, target)
         for decoder_state in decoder_states[:-1]:
-            loss += mse_loss(decoder_state, decoder_final_state)
+            loss += mse_loss(decoder_state, decoder_final_state, target)
         return loss
 
     def compute_cos_similarity_loss(self, net_output):
@@ -296,12 +298,18 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         encoder_txt_states = encoder_txt_states[1:]
         encoder_img_states = encoder_img_states[1:]
         
+        
+        img_target = torch.ones(encoder_img_states[0].reshape(-1, 768).shape[0], device=encoder_img_states[0].device)
+        txt_target = torch.ones(encoder_txt_states[0].reshape(-1, 768).shape[0], device=encoder_txt_states[0].device)
+        decoder_target = torch.ones(decoder_state[0].reshape(-1, 768).shape[0], device=decoder_state[0].device)
+
         loss = 0.0
-        for i in range(0, len(encoder_img_states), 2):
-            loss += cos_func(encoder_img_states[i], encoder_img_states[i+1])
-            loss += cos_func(encoder_txt_states[i], encoder_txt_states[i+1])
-        for i in range(0, len(decoder_state), 2):
-            loss += cos_func(decoder_state[i], decoder_state[i+1])
+        for i in range(0, len(encoder_img_states)-2, 2):
+            loss += cos_func(F.normalize(encoder_img_states[i]).reshape(-1, 768), F.normalize(encoder_img_states[i+1]).reshape(-1, 768), img_target)
+            loss += cos_func(F.normalize(encoder_txt_states[i]).reshape(-1, 768), F.normalize(encoder_txt_states[i+1]).reshape(-1, 768), txt_target)
+        loss /= 
+        # for i in range(0, len(decoder_state)-1, 2):
+        #     loss += cos_func(F.normalize(decoder_state[i]).reshape(-1, 768), F.normalize(decoder_state[i+1]).reshape(-1, 768), decoder_target)
         return loss
             
 

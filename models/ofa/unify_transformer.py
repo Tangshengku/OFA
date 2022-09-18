@@ -1422,7 +1422,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             # x_imitate = self.imitate_layer(x)
             x_imitate = x
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 0.95:       
+            if similarity > 1:       
                 for i in range(idx + 1, len(self.layers)):
                     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
                     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
