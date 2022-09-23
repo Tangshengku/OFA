@@ -16,7 +16,7 @@ data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,2,3,4,5
 
-experiments=encoder_adaptive
+experiments=encoder_14_25_36_cos_loss_detach_decoder_layerwise_cosloss_no_detach
 task=snli_ve
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -39,7 +39,7 @@ prompt_type="prev_output"
 
 for max_epoch in {5,}; do
   echo "max_epoch "${max_epoch}
-  for lr in {5e-5,}; do
+  for lr in {1e-4,}; do
     echo "lr "${lr}
 
     log_file=${log_dir}/${experiments}"_"${lr}".log"
@@ -73,8 +73,8 @@ for max_epoch in {5,}; do
         --dropout=${dropout} \
         --attention-dropout=${attention_dropout} \
         --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
-        --lr-scheduler=polynomial_decay --lr=5e-5 \
-        --max-epoch=5 --warmup-ratio=${warmup_ratio} \
+        --lr-scheduler=polynomial_decay --lr=1e-4 \
+        --max-epoch=10 --warmup-ratio=${warmup_ratio} \
         --log-format=simple --log-interval=10 \
         --fixed-validation-seed=7 \
         --keep-best-checkpoints=1 \
@@ -93,7 +93,8 @@ for max_epoch in {5,}; do
         --patch-image-size=${patch_image_size} \
         --prompt-type=${prompt_type} \
         --add-caption \
-        --fp16 \
+        --fp16\
+        --fp16-scale-tolerance=0.25\
         --fp16-scale-window=512 \
         --num-workers=0 > ${log_file} 2>&1
   done
