@@ -5,18 +5,18 @@
 export MASTER_PORT=1061
 
 log_dir=./stage1_logs
-save_dir=/data/tsk/checkpoints/stage1_checkpoints
+save_dir=./checkpoints/stage1_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=/data/tsk/caption_data
+data_dir=../../alldata/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/data/tsk/checkpoints/stage1_checkpoints/adaptive_{0.06,}_{6000,}/checkpoint.best_cider_1.2740.pt
+restore_file=/home/dongk/dkgroup/tsk/projects/OFA/checkpoints/ofa_base.pt
 selected_cols=0,4,2
 
-experiments=adaptive
+experiments=shallow_deep_freeze
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -24,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=4
+batch_size=32
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -49,7 +49,7 @@ for max_epoch in {5,}; do
       save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}
       mkdir -p $save_path
 
-      CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6 python3 -m torch.distributed.launch --nproc_per_node=7 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \

@@ -16,7 +16,7 @@ data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
 restore_file=../../checkpoints/ofa_base.pt
 selected_cols=0,2,3,4,5
 
-experiments=encoder_14_25_36_cos_loss_detach_decoder_layerwise_cosloss_no_detach
+experiments=encoder_decoder_cos_sim_to_layer6_detach
 task=snli_ve
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy

@@ -299,30 +299,29 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         encoder_img_states = encoder_img_states[1:]
         
         
-        img_target = torch.ones(encoder_img_states[0].reshape(-1, 768).shape[0], device=encoder_img_states[0].device)
-        txt_target = torch.ones(encoder_txt_states[0].reshape(-1, 768).shape[0], device=encoder_txt_states[0].device)
+        img_target = torch.ones(encoder_img_states[0].reshape(-1, 768).shape[0], device=encoder_img_states[0].device).type_as(encoder_img_states[0])
+        txt_target = torch.ones(encoder_txt_states[0].reshape(-1, 768).shape[0], device=encoder_txt_states[0].device).type_as(encoder_img_states[0])
         decoder_target = torch.ones(decoder_state[0].reshape(-1, 768).shape[0], device=decoder_state[0].device)
 
         loss = 0.0
-        layer_num = 3
+        layer_num = 5
         img_loss = 0.0
         txt_loss = 0.0
         decoder_loss = 0.0
         # loss += cos_func(F.normalize(encoder_img_states[0]).reshape(-1, 768), F.normalize(encoder_img_states[-1]).reshape(-1, 768), img_target)
         # loss += cos_func(F.normalize(encoder_txt_states[0]).reshape(-1, 768), F.normalize(encoder_txt_states[-1]).reshape(-1, 768), txt_target)
         # loss += cos_func(F.normalize(decoder_state[0]).reshape(-1, 768), F.normalize(decoder_state[-1]).reshape(-1, 768), decoder_target)
-        for i in range(3):
-            img_state_float = encoder_img_states[i].float()
-            txt_state_float = encoder_txt_states[i].float()
-            img_float_deep = encoder_img_states[layer_num+i].detach().float()
-            txt_float_deep = encoder_txt_states[layer_num+i].detach().float()
-            loss += cos_func(F.normalize(img_state_float, eps=1e-6).reshape(-1, 768), F.normalize(img_float_deep, eps=1e-6).reshape(-1, 768), img_target).type_as(encoder_img_states[0])
-            loss += cos_func(F.normalize(txt_state_float, eps=1e-6).reshape(-1, 768), F.normalize(txt_float_deep, eps=1e-6).reshape(-1, 768), txt_target).type_as(encoder_img_states[0])
-        decoder_layer_num = 5
-        for i in range(0, 5, 2):
+        for i in range(0, 3):
+            loss += cos_func(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[layer_num-i].detach(), eps=1e-6).reshape(-1, 768), img_target)
+            loss += cos_func(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[layer_num-i].detach(), eps=1e-6).reshape(-1, 768), txt_target)
+        for i in range(0, 3):
             decoder_shallow_float = decoder_state[i].float()
-            decoder_deep_float = decoder_state[i+1].float()
-            loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768), decoder_target).type_as(encoder_img_states[0])
+            decoder_deep_float = decoder_state[layer_num-i].float().detach()
+            loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), decoder_target)
+        # for i in range(3):
+        #     decoder_shallow_float = decoder_state[i].float()
+        #     decoder_deep_float = decoder_state[layer_num-i].float()
+        #     loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float.detach(), eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), decoder_target)
         loss /= 3
         return loss
     def compute_accuracy(self, model, net_output, sample):

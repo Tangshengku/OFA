@@ -2,7 +2,7 @@
 
 # The port for communication. Note that if you want to run multiple tasks on the same machine,
 # you need to specify different port numbers.
-export MASTER_PORT=7090
+export MASTER_PORT=7091
 
 user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
@@ -11,7 +11,7 @@ bpe_dir=../../utils/BPE
 split=test
 
 data=../../alldata/snli_ve/snli_ve_${split}.tsv
-path=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/snli_ve/checkpoints/ofa_snli_ve/encoder_14_25_36_cos_loss_detach_decoder_layerwise_cosloss_no_detach_{1e-4,}/checkpoint.best_snli_score_0.8850.pt
+path=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/snli_ve/checkpoints/ofa_snli_ve/shallow_deep_freeze/checkpoint.best_snli_score_0.8870.pt
 result_path=../../results/snli_ve
 selected_cols=0,2,3,4,5
 

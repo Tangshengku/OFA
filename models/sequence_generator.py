@@ -824,7 +824,7 @@ class EnsembleModel(nn.Module):
             if self.has_encoder():
                 encoder_out = encoder_outs[i]
             # decode each model
-            if self.has_incremental_states():
+            if self.has_incremental_states()==False:
                 decoder_out = model.decoder.forward(
                     tokens,
                     code_masks=code_mask,
