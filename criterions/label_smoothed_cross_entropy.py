@@ -304,19 +304,19 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         decoder_target = torch.ones(decoder_state[0].reshape(-1, 768).shape[0], device=decoder_state[0].device)
 
         loss = 0.0
-        layer_num = 5
+        layer_num = 3
         img_loss = 0.0
         txt_loss = 0.0
         decoder_loss = 0.0
         # loss += cos_func(F.normalize(encoder_img_states[0]).reshape(-1, 768), F.normalize(encoder_img_states[-1]).reshape(-1, 768), img_target)
         # loss += cos_func(F.normalize(encoder_txt_states[0]).reshape(-1, 768), F.normalize(encoder_txt_states[-1]).reshape(-1, 768), txt_target)
         # loss += cos_func(F.normalize(decoder_state[0]).reshape(-1, 768), F.normalize(decoder_state[-1]).reshape(-1, 768), decoder_target)
-        for i in range(0, 3):
-            loss += cos_func(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[layer_num-i].detach(), eps=1e-6).reshape(-1, 768), img_target)
-            loss += cos_func(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[layer_num-i].detach(), eps=1e-6).reshape(-1, 768), txt_target)
-        for i in range(0, 3):
+        for i in range(0, 5):
+            loss += cos_func(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[-1].detach(), eps=1e-6).reshape(-1, 768), img_target)
+            loss += cos_func(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[-1].detach(), eps=1e-6).reshape(-1, 768), txt_target)
+        for i in range(0, 5):
             decoder_shallow_float = decoder_state[i].float()
-            decoder_deep_float = decoder_state[layer_num-i].float().detach()
+            decoder_deep_float = decoder_state[-1].float().detach()
             loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), decoder_target)
         # for i in range(3):
         #     decoder_shallow_float = decoder_state[i].float()

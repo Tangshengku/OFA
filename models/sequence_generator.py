@@ -334,8 +334,12 @@ class SequenceGenerator(nn.Module):
             original_batch_idxs = torch.arange(0, bsz).type_as(tokens)
 
         decoder_exit_layers = []
+        
         for step in range(max_len + 1):  # one extra step for EOS marker
             # reorder decoder internal states based on the prev choice of beams
+            skip = True
+            if step > (max_len + 1)/2 :
+                skip = False
             if reorder_state is not None:
                 if batch_idxs is not None:
                     # update beam indices to take into account removed sentences
@@ -361,7 +365,8 @@ class SequenceGenerator(nn.Module):
                     constraint_end=self.constraint_end,
                     gen_code=self.gen_code,
                     zero_shot=self.zero_shot,
-                    prefix_tokens=prefix_tokens
+                    prefix_tokens=prefix_tokens,
+                    skip=skip
                 )
                 decoder_exit_layers.append(decoder_exit_layer)
 
@@ -814,7 +819,8 @@ class EnsembleModel(nn.Module):
         constraint_end=None,
         gen_code=False,
         zero_shot=False,
-        prefix_tokens=None
+        prefix_tokens=None,
+        skip=True
     ):
         log_probs = []
         avg_attn: Optional[Tensor] = None
@@ -833,7 +839,7 @@ class EnsembleModel(nn.Module):
                 )
             else:
                 if hasattr(model, "decoder"):
-                    decoder_out = model.decoder.forward(tokens, code_masks=code_mask, encoder_out=encoder_out)
+                    decoder_out = model.decoder.forward(tokens, code_masks=code_mask, encoder_out=encoder_out, skip=skip)
                 else:
                     decoder_out = model.forward(tokens)
 

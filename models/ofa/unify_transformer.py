@@ -1226,6 +1226,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         alignment_heads: Optional[int] = None,
         src_lengths: Optional[Any] = None,
         return_all_hiddens: bool = False,
+        skip=True
     ):
         """
         Args:
@@ -1254,6 +1255,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             full_context_alignment=full_context_alignment,
             alignment_layer=alignment_layer,
             alignment_heads=alignment_heads,
+            skip=skip
         )
 
         if not features_only:
@@ -1269,6 +1271,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        skip=True
     ):
         return self.extract_features_scriptable(
             prev_output_tokens,
@@ -1278,6 +1281,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             full_context_alignment,
             alignment_layer,
             alignment_heads,
+            skip=skip
         )
 
     """
@@ -1295,6 +1299,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        skip=True,
     ):
         """
         Similar to *forward* but only return features.
@@ -1421,15 +1426,16 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             )
             # x_imitate = self.imitate_layer(x)
             x_imitate = x
+            inner_states.append(x)
+            if layer_attn is not None and idx == alignment_layer:
+                attn = layer_attn.float().to(x)
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 1:       
+            if similarity > 0.95 and skip:       
                 # for i in range(idx + 1, len(self.layers)):
                 #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
                 #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
                 break
-            inner_states.append(x)
-            if layer_attn is not None and idx == alignment_layer:
-                attn = layer_attn.float().to(x)
+            
         # x = x_imitate
         if attn is not None:
             if alignment_heads is not None:

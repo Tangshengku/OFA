@@ -16,7 +16,7 @@ data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
 restore_file=/home/dongk/dkgroup/tsk/projects/OFA/checkpoints/ofa_base.pt
 selected_cols=0,4,2
 
-experiments=shallow_deep_freeze
+experiments=similair_to_6_cos_loss
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy

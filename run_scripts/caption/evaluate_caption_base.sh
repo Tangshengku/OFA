@@ -8,7 +8,7 @@ user_dir=../../ofa_module
 bpe_dir=../../utils/BPE
 
 data=../../alldata/caption_data/caption_test.tsv
-path=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage2_checkpoints/shallow_deep_freeze_stage2_{3,}/checkpoint.best_cider_1.4380.pt
+path=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage2_checkpoints/similar_6_cos_loss_{3,}/checkpoint.best_cider_1.4470.pt
 result_path=../../results/caption
 selected_cols=1,4,2
 split='test'
