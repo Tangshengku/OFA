@@ -5,6 +5,7 @@
 
 import math
 from dataclasses import dataclass, field
+from os import truncate
 from typing import Optional
 
 import torch
@@ -14,7 +15,7 @@ from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
 from fairseq.dataclass import FairseqDataclass
 from omegaconf import II
-from torch.nn import MSELoss, CosineEmbeddingLoss
+from torch.nn import MSELoss, CosineEmbeddingLoss, BCELoss, CrossEntropyLoss
 
 
 @dataclass
@@ -73,6 +74,11 @@ def construct_rdrop_sample(x):
     else:
         raise NotImplementedError
 
+def log_softmax(x, dim: int = -1, onnx_trace: bool = False):
+    if onnx_trace:
+        return F.log_softmax(x.float(), dim=dim)
+    else:
+        return F.log_softmax(x, dim=dim, dtype=torch.float16)
 
 def kl_loss(p, q):
     p_loss = F.kl_div(p, torch.exp(q), reduction='sum')
@@ -197,6 +203,9 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         if self.use_rdrop:
             construct_rdrop_sample(sample)
 
+        # for name, p in model.named_parameters():
+        #     if p.requires_grad_ == True:
+        #         print(name)
         net_output = model(**sample["net_input"])
         loss, nll_loss, ntokens = self.compute_loss(model, net_output, sample, update_num, reduce=reduce)
         sample_size = (
@@ -264,8 +273,35 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             constraint_end=self.constraint_end
         )
         # loss += self.compute_self_distill_loss(net_output)
-        loss += self.compute_cos_similarity_loss(net_output)
+        loss += self.compute_early_exit_loss(model, net_output, sample)
+        # loss += self.compute_cos_similarity_loss(net_output)
         return loss, nll_loss, ntokens
+
+    def compute_early_exit_loss(self, model, net_output, sample):
+        conf = sample['conf'][:, None, None] if 'conf' in sample and sample['conf'] is not None else 1
+        constraint_masks = None
+        net_output = list(net_output)
+        if "constraint_masks" in sample and sample["constraint_masks"] is not None:
+            constraint_masks = sample["constraint_masks"]
+            net_output[0] = net_output[0].masked_fill(~constraint_masks, -math.inf)
+            for i, state in enumerate(net_output[1]["inner_out_state"]):
+                net_output[1]["inner_out_state"][i] = log_softmax(state.masked_fill(~constraint_masks, -math.inf))
+        lprobs = model.get_normalized_probs(net_output, log_probs=True) * conf
+        targets = []
+        # print("lprobs: ", lprobs.shape)
+        # print("states: ", net_output[1]["inner_out_state"][0].shape)
+        for state in net_output[1]["inner_out_state"]:
+            target = torch.argmax(lprobs.detach().transpose(0, 1), dim=-1, keepdim=True)==torch.argmax(state, dim=-1, keepdim=True)
+            targets.append(torch.cat([target, ~target], dim=-1))
+        actn = torch.nn.Sigmoid()
+        loss_fn = CrossEntropyLoss()
+        loss = 0.0
+        
+        for i, state in enumerate(net_output[1]["inner_exit_state"]):
+            loss += loss_fn(log_softmax(state.reshape(-1, 2)) , targets[i].reshape(-1, 2).type_as(state))
+        
+        return loss
+
 
     def compute_self_distill_loss(self, net_output):
         mse_loss = MSELoss()

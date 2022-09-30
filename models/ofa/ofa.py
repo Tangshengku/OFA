@@ -35,6 +35,7 @@ class OFAModel(TransformerModel):
         self.classification_heads = nn.ModuleDict()
         if hasattr(self.encoder, "dictionary"):
             self.eos: int = self.encoder.dictionary.eos()
+        
 
     @staticmethod
     def add_args(parser):

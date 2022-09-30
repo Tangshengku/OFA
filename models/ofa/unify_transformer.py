@@ -4,6 +4,7 @@
 # found in the LICENSE file in the root directory.
 
 import math
+from operator import truediv
 import random
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -115,7 +116,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
         super().__init__(encoder, decoder)
         self.args = args
         self.supports_align_args = True
-
+        
+    
     @staticmethod
     def add_args(parser):
         """Add model-specific arguments to the parser."""
@@ -309,10 +311,10 @@ class TransformerModel(FairseqEncoderDecoderModel):
             decoder_embed_tokens = cls.build_embedding(
                 args, tgt_dict, args.decoder_embed_dim, args.decoder_embed_path
             )
-        if getattr(args, "freeze_encoder_embedding", False):
-            encoder_embed_tokens.weight.requires_grad = False
-        if getattr(args, "freeze_decoder_embedding", False):
-            decoder_embed_tokens.weight.requires_grad = False
+        # if getattr(args, "freeze_encoder_embedding", False):
+        encoder_embed_tokens.weight.requires_grad = False
+        # if getattr(args, "freeze_decoder_embedding", False):
+        decoder_embed_tokens.weight.requires_grad = False
         if getattr(args, "offload_activations", False):
             args.checkpoint_activations = True  # offloading implies checkpointing
         encoder = cls.build_encoder(args, src_dict, encoder_embed_tokens)
@@ -382,7 +384,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             return_all_hiddens=return_all_hiddens,
         )
         return decoder_out
-
+    
     # Since get_normalized_probs is in the Fairseq Model which is not scriptable,
     # I rewrite the get_normalized_probs from Base Class to call the
     # helper function in the Base Class.
@@ -518,12 +520,12 @@ class TransformerEncoder(FairseqEncoder):
         self.register_buffer("token_rp_bucket", token_rp_bucket)
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.entangle_position_embedding = args.entangle_position_embedding
-        # self.freeze_param()
+        self.freeze_param()
     
     def freeze_param(self):
         for name, param in self.named_parameters():
-            if "imitate" not in name:
-                param.requires_grad_ = False
+            if "early_exit" not in name:
+                param.requires_grad = False
 
     def build_encoder_layer(self, args, drop_path_rate=0.0):
         layer = TransformerEncoderLayer(args, drop_path_rate=drop_path_rate)
@@ -1092,6 +1094,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             ]
         )
         self.num_layers = len(self.layers)
+        
+        self.early_exit_layer = nn.Linear(self.embed_tokens.weight.shape[0], 2)
 
         if args.decoder_normalize_before:
             self.layer_norm = LayerNorm(embed_dim)
@@ -1131,7 +1135,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.register_buffer("image_position_idx", image_position_idx)
         self.entangle_position_embedding = args.entangle_position_embedding
+        self.freeze_param()
 
+    def freeze_param(self):
+        for name, param in self.named_parameters():
+            if "early_exit_layer" not in name:
+                param.requires_grad = False
     def build_output_projection(self, args, dictionary, embed_tokens):
         if args.adaptive_softmax_cutoff is not None:
             self.adaptive_softmax = AdaptiveSoftmax(
@@ -1258,8 +1267,9 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             skip=skip
         )
 
-        if not features_only:
+        if not features_only:    
             x = self.output_layer(x)
+
         return x, extra
 
     def extract_features(
@@ -1394,6 +1404,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         # decoder layers
         attn: Optional[Tensor] = None
         inner_states: List[Optional[Tensor]] = [x]
+        inner_out_states: List[Optional[Tensor]] = []
+        inner_exit_states: List[Optional[Tensor]] = []
         for idx, layer in enumerate(self.layers):
             if incremental_state is None and not full_context_alignment:
                 self_attn_mask = self.buffered_future_mask(x)
@@ -1424,13 +1436,18 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self_attn_bias=self_attn_bias,
                 cross_attn_bias=cross_abs_pos_bias
             )
-            # x_imitate = self.imitate_layer(x)
+
             x_imitate = x
             inner_states.append(x)
+            if idx != 5:
+                x_out = self.output_layer(x)
+                inner_out_states.append(x_out)
+                x_exit = self.early_exit_layer(x_out)
+                inner_exit_states.append(x_exit)
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 0.95 and skip:       
+            if similarity > 1 and skip:       
                 # for i in range(idx + 1, len(self.layers)):
                 #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
                 #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
@@ -1453,7 +1470,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
 
-        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx + 1}
+        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx + 1, "inner_out_state": inner_out_states, "inner_exit_state":inner_exit_states}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""

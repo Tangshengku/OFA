@@ -13,10 +13,10 @@ user_dir=../../ofa_module
 
 data_dir=../../alldata/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/home/dongk/dkgroup/tsk/projects/OFA/checkpoints/ofa_base.pt
+restore_file=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage2_checkpoints/similar_6_cos_loss_{3,}/checkpoint.best_cider_1.4470.pt
 selected_cols=0,4,2
 
-experiments=similair_to_6_cos_loss
+experiments=similair_to_6_cos_loss+early_exit_training
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -101,7 +101,7 @@ for max_epoch in {5,}; do
           --patch-image-size=${patch_image_size} \
           --drop-worst-ratio=${drop_worst_ratio} \
           --drop-worst-after=6000 \
-          --fp16 \
+          --fp16\
           --fp16-scale-window=512 \
           --num-workers=0 > ${log_file} 2>&1
     done
