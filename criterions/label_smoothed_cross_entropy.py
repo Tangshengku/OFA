@@ -80,6 +80,12 @@ def kl_loss(p, q):
     loss = (p_loss + q_loss) / 2
     return loss
 
+def kl_loss_detach(p, q):
+    p_loss = F.kl_div(p, torch.exp(q.detach()), reduction='sum')
+    q_loss = F.kl_div(q, torch.exp(p.detach()), reduction='sum')
+    loss = (p_loss + q_loss) / 2
+    return loss
+
 
 def label_smoothed_nll_loss(
         lprobs, target, epsilon, update_num, reduce=True,
@@ -244,28 +250,35 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         return lprobs.view(-1, lprobs.size(-1)), target.view(-1), constraint_masks
 
     def compute_loss(self, model, net_output, sample, update_num, reduce=True):
-        lprobs, target, constraint_masks = self.get_lprobs_and_target(model, net_output, sample)
-        if constraint_masks is not None:
-            constraint_masks = constraint_masks[target != self.padding_idx]
-        lprobs = lprobs[target != self.padding_idx]
-        target = target[target != self.padding_idx]
-        loss, nll_loss, ntokens = label_smoothed_nll_loss(
-            lprobs,
-            target,
-            self.eps,
-            update_num,
-            reduce=reduce,
-            drop_worst_ratio=self.drop_worst_ratio,
-            drop_worst_after=self.drop_worst_after,
-            use_rdrop=self.use_rdrop,
-            reg_alpha=self.reg_alpha,
-            constraint_masks=constraint_masks,
-            constraint_start=self.constraint_start,
-            constraint_end=self.constraint_end
-        )
+        loss_all = 0.0
+        nll_loss_all = 0.0
+        ntokens = 0
+
+        for state in net_output[1]["inner_out_states"][-1:]:
+            lprobs, target, constraint_masks = self.get_lprobs_and_target(model, [state], sample)
+            if constraint_masks is not None:
+                constraint_masks = constraint_masks[target != self.padding_idx]
+            lprobs = lprobs[target != self.padding_idx]
+            target = target[target != self.padding_idx]
+            loss, nll_loss, ntokens = label_smoothed_nll_loss(
+                lprobs,
+                target,
+                self.eps,
+                update_num,
+                reduce=reduce,
+                drop_worst_ratio=self.drop_worst_ratio,
+                drop_worst_after=self.drop_worst_after,
+                use_rdrop=self.use_rdrop,
+                reg_alpha=self.reg_alpha,
+                constraint_masks=constraint_masks,
+                constraint_start=self.constraint_start,
+                constraint_end=self.constraint_end
+            )
+            loss_all += loss
+            nll_loss_all += nll_loss 
         # loss += self.compute_self_distill_loss(net_output)
         loss += self.compute_cos_similarity_loss(net_output)
-        return loss, nll_loss, ntokens
+        return loss_all, nll_loss_all, ntokens
 
     def compute_self_distill_loss(self, net_output):
         mse_loss = MSELoss()
@@ -312,12 +325,12 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         # loss += cos_func(F.normalize(encoder_txt_states[0]).reshape(-1, 768), F.normalize(encoder_txt_states[-1]).reshape(-1, 768), txt_target)
         # loss += cos_func(F.normalize(decoder_state[0]).reshape(-1, 768), F.normalize(decoder_state[-1]).reshape(-1, 768), decoder_target)
         for i in range(0, 5):
-            loss += cos_func(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[-1].detach(), eps=1e-6).reshape(-1, 768), img_target)
-            loss += cos_func(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[-1].detach(), eps=1e-6).reshape(-1, 768), txt_target)
+            loss += kl_loss_detach(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[-1].detach(), eps=1e-6).reshape(-1, 768))
+            loss += kl_loss_detach(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[-1].detach(), eps=1e-6).reshape(-1, 768))
         for i in range(0, 5):
             decoder_shallow_float = decoder_state[i].float()
             decoder_deep_float = decoder_state[-1].float().detach()
-            loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), decoder_target)
+            loss += kl_loss_detach(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]))
         # for i in range(3):
         #     decoder_shallow_float = decoder_state[i].float()
         #     decoder_deep_float = decoder_state[layer_num-i].float()

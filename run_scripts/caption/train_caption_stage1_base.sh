@@ -13,10 +13,10 @@ user_dir=../../ofa_module
 
 data_dir=../../alldata/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/home/dongk/dkgroup/tsk/projects/OFA/checkpoints/ofa_base.pt
+restore_file=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage1_checkpoints/test_{0.06,}_{6000,}/checkpoint.best_cider_1.3370.pt
 selected_cols=0,4,2
 
-experiments=similair_to_6_cos_loss
+experiments=6_task_loss+self_kd_6_refine
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy

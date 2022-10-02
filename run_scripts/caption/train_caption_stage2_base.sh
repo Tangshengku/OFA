@@ -13,10 +13,10 @@ user_dir=../../ofa_module
 
 data_dir=../../alldata/caption_data
 data=${data_dir}/caption_stage2_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage1_checkpoints/similair_to_6_cos_loss_{0.06,}_{6000,}/checkpoint.best_cider_1.3280.pt
+restore_file=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage1_checkpoints/test_{0.06,}_{6000,}/checkpoint.best_cider_1.3370.pt
 selected_cols=1,4,2
 
-experments=similar_6_cos_loss
+experments=task_loss_for_6layers_stage2
 task=caption
 arch=ofa_base
 criterion=scst_reward_criterion

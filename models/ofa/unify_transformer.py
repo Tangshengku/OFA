@@ -1394,6 +1394,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         # decoder layers
         attn: Optional[Tensor] = None
         inner_states: List[Optional[Tensor]] = [x]
+        inner_out_states: List[Optional[Tensor]] = []
         for idx, layer in enumerate(self.layers):
             if incremental_state is None and not full_context_alignment:
                 self_attn_mask = self.buffered_future_mask(x)
@@ -1426,15 +1427,17 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             )
             # x_imitate = self.imitate_layer(x)
             x_imitate = x
-            inner_states.append(x)
-            if layer_attn is not None and idx == alignment_layer:
-                attn = layer_attn.float().to(x)
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 0.95 and skip:       
+            if similarity > 1 and skip:       
                 # for i in range(idx + 1, len(self.layers)):
                 #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
                 #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
                 break
+            inner_states.append(x)
+            inner_out_states.append(self.output_layer(self.layer_norm(x).transpose(0, 1)))
+            if layer_attn is not None and idx == alignment_layer:
+                attn = layer_attn.float().to(x)
+            
             
         # x = x_imitate
         if attn is not None:
@@ -1453,7 +1456,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
 
-        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx + 1}
+        return x, {"attn": [attn], "inner_states": inner_states, "exit_layer": idx + 1, "inner_out_states": inner_out_states}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""
