@@ -246,7 +246,7 @@ def load_checkpoint(cfg: CheckpointConfig, trainer, **passthrough_args):
             "can not be specified together: " + str(cfg)
         )
 
-    teacher_path = "/home/dongk/dkgroup/tsk/projects/OFA/checkpoints/caption_base_best.pt"
+    teacher_path = "/home/sht22008/tsk/projects/OFA/checkpoints/caption_base_best.pt"
     
     teacher_extra_state = trainer.load_teacher_checkpoint(
         teacher_path,

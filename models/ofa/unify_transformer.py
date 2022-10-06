@@ -979,7 +979,7 @@ class TransformerEncoder(FairseqEncoder):
         abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
 
         encoder_states = []
-
+        return_all_hiddens = True
         if return_all_hiddens:
             encoder_states.append(x)
 
@@ -1015,7 +1015,7 @@ class TransformerEncoder(FairseqEncoder):
             "encoder_out": [x],  # T x B x C
             "encoder_padding_mask": [encoder_padding_mask],  # B x T
             "encoder_embedding": [],  # B x T x C
-            "encoder_states": [encoder_states],  # List[T x B x C]
+            "encoder_states": encoder_states,  # List[T x B x C]
             "src_tokens": [],
             "src_lengths": [],
             "position_embeddings": [pos_embed],  # B x T x C

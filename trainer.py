@@ -515,9 +515,7 @@ class Trainer(object):
                     group=self.data_parallel_process_group,
                     dist_device=self.device,
                 )
-                if self.data_parallel_rank > 0:
-                    last_optim_state = state.get("last_optimizer_state", None)
-
+                
             # load model parameters
             try:
                 if self.cfg.checkpoint.use_ema_weights_to_init_param and "extra_state" in state and "ema" in state["extra_state"]:
@@ -530,124 +528,18 @@ class Trainer(object):
                     self.teacher_model.load_state_dict(
                         state["model"], strict=True, model_cfg=self.cfg.model
                     )
-                # save memory for later steps
-                if not (self.cfg.ema.store_ema and (self.cfg.checkpoint.use_latest_weights_to_init_ema or not ("extra_state" in state and "ema" in state["extra_state"]))):
-                    del state["model"]
-                if utils.has_parameters(self.get_criterion()):
-                    self.get_criterion().load_state_dict(
-                        state["criterion"], strict=True
-                    )
-                    del state["criterion"]
-
             except Exception:
                 raise Exception(
                     "Cannot load model parameters from checkpoint {}; "
                     "please ensure that the architectures match.".format(filename)
                 )
             extra_state = state["extra_state"]
-            self._optim_history = state["optimizer_history"]
-
-        if last_optim_state is not None and not reset_optimizer:
-            # rebuild optimizer after loading model, since params may have changed
-            self._build_optimizer()
-
-            # only reload optimizer and lr_scheduler if they match
-            last_optim = self._optim_history[-1]
-            assert (
-                last_optim["criterion_name"] == self.get_criterion().__class__.__name__
-            ), f"Criterion does not match; please reset the optimizer (--reset-optimizer). {last_optim['criterion_name']} vs {self.get_criterion().__class__.__name__}"
-            assert (
-                last_optim["optimizer_name"] == self.optimizer.__class__.__name__
-            ), f"Optimizer does not match; please reset the optimizer (--reset-optimizer). {last_optim['optimizer_name']} vs {self.optimizer.__class__.__name__}"
-
-            if not reset_lr_scheduler:
-                self.lr_scheduler.load_state_dict(last_optim["lr_scheduler_state"])
-
-            if self.is_fsdp and not self.model.use_sharded_state:
-                # if use_sharded_state, the last_optim_state is already sharded, skip this
-                last_optim_state = self.model.get_shard_from_optim_state_dict(
-                    last_optim_state
-                )
-            elif not load_on_all_ranks and is_distributed:
-                last_optim_state = self.optimizer.broadcast_global_state_dict(
-                    last_optim_state
-                )
-
-            self.optimizer.load_state_dict(last_optim_state, optimizer_overrides)
-
-            self.set_num_updates(last_optim["num_updates"])
-
-        if extra_state is not None:
-            itr_state = extra_state["train_iterator"]
-            epoch = itr_state["epoch"]
-
-            if "previous_training_time" in extra_state:
-                self._previous_training_time = extra_state["previous_training_time"]
-                self._start_time = time.time()
-
-            self.lr_step(epoch)
-
-            if (
-                itr_state.get("version", 1) >= 2
-                and itr_state["iterations_in_epoch"] == 0
-            ):
-                # reset meters at start of epoch
-                reset_meters = True
-
-            if "metrics" in extra_state and not reset_meters:
-                metrics.load_state_dict(extra_state["metrics"])
-
-                # reset TimeMeters, since their start times don't make sense anymore
-                for meter in metrics.get_meters("default"):
-                    if isinstance(meter, meters.TimeMeter):
-                        meter.reset()
-
-            if self.cfg.ema.store_ema:
-                if self.cfg.checkpoint.use_latest_weights_to_init_ema or "ema" not in extra_state:
-                    if "ema" not in extra_state:
-                        logger.warn(
-                            "EMA not found in checkpoint. But store_ema is True. "
-                            "EMA is re-initialized from checkpoint."
-                        )
-                    elif self.cfg.checkpoint.use_latest_weights_to_init_ema:
-                        logger.info(
-                            "use_latest_weights_to_init_ema = True. EMA is re-initialized from checkpoint."
-                        )
-                    self.ema.restore(state["model"], build_fp32_params=self.cfg.ema.ema_fp32)
-                    del state["model"]
-                else:
-                    logger.info(
-                        "Loading EMA from checkpoint"
-                    )
-                    self.ema.restore(extra_state["ema"], build_fp32_params=False)
-
-                    if self.cfg.ema.ema_fp32:
-                        if "ema_fp32_params" in extra_state:
-                            logger.info(
-                                "Loading EMA fp32 params from checkpoint"
-                            )
-                            self.ema.build_fp32_params(extra_state["ema_fp32_params"])
-                        else:
-                            logger.info(
-                                "Building EMA fp32 params from EMA model in checkpoint"
-                            )
-                            self.ema.build_fp32_params()
-
-            logger.info(
-                "Loaded checkpoint {} (epoch {} @ {} updates)".format(
-                    filename, epoch, self.get_num_updates()
-                )
-            )
-
-        else:
-            logger.info("No existing checkpoint found {}".format(filename))
 
         return extra_state
 
     def load_checkpoint(
         self,
         filename,
-        teacher_file_name,
         reset_optimizer=False,
         reset_lr_scheduler=False,
         optimizer_overrides=None,
@@ -661,7 +553,6 @@ class Trainer(object):
         extra_state, self._optim_history, last_optim_state = None, [], None
 
         logger.info(f"Preparing to load checkpoint {filename}")
-        logger.info(f"Preparing to load teacher checkpoint {teacher_file_name}")
         is_distributed = self.data_parallel_world_size > 1
         bexists = PathManager.isfile(filename)
 

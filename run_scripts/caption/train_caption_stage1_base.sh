@@ -13,7 +13,7 @@ user_dir=../../ofa_module
 
 data_dir=/data/tsk/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/home/dongk/dkgroup/tsk/projects/OFA/checkpoints/ofa_base.pt
+restore_file=/home/sht22008/tsk/projects/OFA/checkpoints/ofa_base.pt
 selected_cols=0,4,2
 
 experiments=6_task_loss+6_representation_kd_no_self_kd
@@ -24,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=16
+batch_size=4
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -81,7 +81,7 @@ for max_epoch in {5,}; do
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
-          --save-interval=1 --validate-interval=500 \
+          --save-interval=1 --validate-interval=1 \
           --save-interval-updates=500 --validate-interval-updates=1000 \
           --eval-cider \
           --eval-cider-cached-tokens=${eval_cider_cached} \
