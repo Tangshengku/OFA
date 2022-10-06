@@ -5,18 +5,18 @@
 export MASTER_PORT=1062
 
 log_dir=./stage2_logs
-save_dir=./checkpoints/stage2_checkpoints
+save_dir=/data/tsk/checkpoints/caption/stage2_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../alldata/caption_data
+data_dir=/data/tsk/caption_data
 data=${data_dir}/caption_stage2_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage1_checkpoints/test_{0.06,}_{6000,}/checkpoint.best_cider_1.3370.pt
+restore_file=/data/tsk/checkpoints/caption/stage1_checkpoints/6_task_loss+self_kd_layer_representation_6_training_together_{0.06,}_{6000,}/checkpoint.best_cider_1.3560.pt
 selected_cols=1,4,2
 
-experments=task_loss_for_6layers_stage2
+experments=6_task_loss+self_kd_layer_representation_6_training_together_final_layer_in_stage2
 task=caption
 arch=ofa_base
 criterion=scst_reward_criterion
@@ -24,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=8
+batch_size=4
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.0

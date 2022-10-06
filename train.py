@@ -97,6 +97,7 @@ def main(cfg: FairseqConfig) -> None:
             model = fsdp_wrap(task.build_model(cfg.model))
     else:
         model = task.build_model(cfg.model)
+        teacher_model = task.build_model(cfg.model)
     criterion = task.build_criterion(cfg.criterion)
     logger.info(model)
     logger.info("task: {}".format(task.__class__.__name__))
@@ -137,7 +138,7 @@ def main(cfg: FairseqConfig) -> None:
 
     # Build trainer
     if cfg.common.model_parallel_size == 1:
-        trainer = Trainer(cfg, task, model, criterion, quantizer)
+        trainer = Trainer(cfg, task, teacher_model, model, criterion, quantizer)
     else:
         trainer = MegatronTrainer(cfg, task, model, criterion)
     logger.info(

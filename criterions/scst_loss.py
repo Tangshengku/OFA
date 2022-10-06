@@ -238,6 +238,7 @@ class ScstRewardCriterion(FairseqCriterion):
         return lprobs, gen_target
 
     def compute_cos_similarity_loss(self, net_output):
+
         cos_func = CosineEmbeddingLoss()
         encoder_txt_states, encoder_img_states = net_output[2]
         decoder_state = net_output[1]["inner_states"]
@@ -277,10 +278,10 @@ class ScstRewardCriterion(FairseqCriterion):
         reward, scores = self.get_reward_and_scores(gen_res, gt_res, device=sample["target"].device)
         net_output, gen_target_tokens = self.get_net_output(model, sample, gen_target)
         loss_all = 0.0
-        for state in net_output[1]["inner_out_states"]:
-            gen_lprobs, gen_target_tokens = self.get_lprobs_and_target(model, [state], gen_target_tokens)
-            loss, ntokens = scst_loss(gen_lprobs, gen_target_tokens, reward, ignore_index=self.padding_idx, reduce=reduce)
-            loss_all += loss
+        # for state in net_output[1]["inner_out_states"]:
+        gen_lprobs, gen_target_tokens = self.get_lprobs_and_target(model, net_output, gen_target_tokens)
+        loss, ntokens = scst_loss(gen_lprobs, gen_target_tokens, reward, ignore_index=self.padding_idx, reduce=reduce)
+        loss_all += loss
         nsentences = gen_target_tokens.size(0)
         # loss += self.compute_cos_similarity_loss(net_output)
         return loss_all, scores.sum(), ntokens, nsentences
