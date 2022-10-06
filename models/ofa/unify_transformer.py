@@ -980,6 +980,8 @@ class TransformerEncoder(FairseqEncoder):
 
         encoder_states = []
         return_all_hiddens = True
+    
+
         if return_all_hiddens:
             encoder_states.append(x)
 

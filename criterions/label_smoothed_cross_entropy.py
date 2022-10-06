@@ -204,9 +204,11 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             construct_rdrop_sample(sample)
 
         net_output = model(**sample["net_input"])
-        with torch.no_grad():
-            teacher_out = teacher_model(**sample["net_input"], is_teacher=True)
-        loss, nll_loss, ntokens = self.compute_loss(teacher_out, model, net_output, sample, update_num, reduce=reduce)
+        teacher_out = None
+        if teacher_model is not None:
+            with torch.no_grad():
+                teacher_out = teacher_model(**sample["net_input"], is_teacher=True)
+        loss, nll_loss, ntokens = self.compute_loss(model, net_output, sample, update_num, teacher_out=teacher_out,reduce=reduce)
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else ntokens
         )
@@ -251,7 +253,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             constraint_masks = constraint_masks.view(-1, constraint_masks.size(-1))
         return lprobs.view(-1, lprobs.size(-1)), target.view(-1), constraint_masks
 
-    def compute_loss(self, teacher_out, model, net_output, sample, update_num, reduce=True):
+    def compute_loss(self, model, net_output, sample, update_num, reduce=True, teacher_out=None):
         loss_all = 0.0
         nll_loss_all = 0.0
         ntokens = 0
@@ -280,7 +282,8 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             nll_loss_all += nll_loss 
         # loss += self.compute_self_distill_loss(net_output)
         # loss += self.compute_cos_similarity_loss(net_output)
-        loss += self.compute_kd_loss(teacher_out, net_output)
+        if teacher_out is not None:
+            loss += self.compute_kd_loss(teacher_out, net_output)
         return loss_all, nll_loss_all, ntokens
 
     def compute_self_distill_loss(self, net_output):
