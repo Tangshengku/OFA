@@ -826,8 +826,8 @@ class TransformerEncoder(FairseqEncoder):
             # x_imitate = self.txt_imitate(x)
             x_imitate = x
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 1:
-                break
+            # if similarity > 1:
+            #     break
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
@@ -857,8 +857,10 @@ class TransformerEncoder(FairseqEncoder):
             )
             # image_x_imitate = self.image_imitate(image_x)
             image_x_imitate = image_x
-            similarity = torch.cosine_similarity(F.normalize(image_x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states_img[-1].clone().contiguous().view(1, -1)) )
+            similarity = torch.cosine_similarity(F.normalize(image_x_imitate.clone().contiguous().view(-1, image_x_imitate.shape[-1]), eps=1e-6), F.normalize(encoder_states_img[-1].clone().contiguous().view(-1, encoder_states_img[-1].shape[-1]), eps=1e-6), eps=1e-6)
+            similarity = similarity.mean()
             if similarity > 1:
+                print(similarity)
                 break
             if return_all_hiddens:
                 assert encoder_states_img is not None

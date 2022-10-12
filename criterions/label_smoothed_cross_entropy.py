@@ -86,6 +86,11 @@ def kl_loss_detach(p, q):
     loss = (p_loss + q_loss) / 2
     return loss
 
+def kl_loss_log_softmax_detach(p, q):
+    p_loss = F.kl_div(F.log_softmax(p, dim=-1), F.softmax(q, dim=-1).detach(), reduction='sum')
+    q_loss = F.kl_div(F.log_softmax(q, dim=-1), F.softmax(p, dim=-1).detach(), reduction='sum')
+    loss = (p_loss + q_loss) / 2
+    return loss
 
 def label_smoothed_nll_loss(
         lprobs, target, epsilon, update_num, reduce=True,
@@ -254,7 +259,7 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         nll_loss_all = 0.0
         ntokens = 0
 
-        for state in net_output[1]["inner_out_states"][-1:]:
+        for state in net_output[1]["inner_out_states"]:
             lprobs, target, constraint_masks = self.get_lprobs_and_target(model, [state], sample)
             if constraint_masks is not None:
                 constraint_masks = constraint_masks[target != self.padding_idx]
@@ -277,7 +282,9 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             loss_all += loss
             nll_loss_all += nll_loss 
         # loss += self.compute_self_distill_loss(net_output)
-        loss += self.compute_cos_similarity_loss(net_output)
+        loss_all /= 12
+        nll_loss_all /= 12
+        loss_all += self.compute_cos_similarity_loss(net_output)
         return loss_all, nll_loss_all, ntokens
 
     def compute_self_distill_loss(self, net_output):
@@ -304,7 +311,8 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         return loss
 
     def compute_cos_similarity_loss(self, net_output):
-        cos_func = CosineEmbeddingLoss()
+        # cos_func = CosineEmbeddingLoss()
+        # cos_func = MSELoss()
         encoder_txt_states, encoder_img_states = net_output[2]
         decoder_state = net_output[1]["inner_states"]
 
@@ -312,9 +320,9 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         encoder_img_states = encoder_img_states[1:]
         
         
-        img_target = torch.ones(encoder_img_states[0].reshape(-1, 768).shape[0], device=encoder_img_states[0].device).type_as(encoder_img_states[0])
-        txt_target = torch.ones(encoder_txt_states[0].reshape(-1, 768).shape[0], device=encoder_txt_states[0].device).type_as(encoder_img_states[0])
-        decoder_target = torch.ones(decoder_state[0].reshape(-1, 768).shape[0], device=decoder_state[0].device)
+        # img_target = torch.ones(encoder_img_states[0].reshape(-1, 768).shape[0], device=encoder_img_states[0].device).type_as(encoder_img_states[0])
+        # txt_target = torch.ones(encoder_txt_states[0].reshape(-1, 768).shape[0], device=encoder_txt_states[0].device).type_as(encoder_img_states[0])
+        # decoder_target = torch.ones(decoder_state[0].reshape(-1, 768).shape[0], device=decoder_state[0].device)
 
         loss = 0.0
         layer_num = 3
@@ -324,18 +332,19 @@ class AdjustLabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         # loss += cos_func(F.normalize(encoder_img_states[0]).reshape(-1, 768), F.normalize(encoder_img_states[-1]).reshape(-1, 768), img_target)
         # loss += cos_func(F.normalize(encoder_txt_states[0]).reshape(-1, 768), F.normalize(encoder_txt_states[-1]).reshape(-1, 768), txt_target)
         # loss += cos_func(F.normalize(decoder_state[0]).reshape(-1, 768), F.normalize(decoder_state[-1]).reshape(-1, 768), decoder_target)
-        for i in range(0, 5):
-            loss += kl_loss_detach(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[-1].detach(), eps=1e-6).reshape(-1, 768))
-            loss += kl_loss_detach(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[-1].detach(), eps=1e-6).reshape(-1, 768))
-        for i in range(0, 5):
+        # print(len(encoder_txt_states))
+        for i in range(0, 11):
+            loss += kl_loss_log_softmax_detach(F.normalize(encoder_img_states[i].float(), eps=1e-6).reshape(-1, encoder_img_states[i].shape[-1]), F.normalize(encoder_img_states[-1].float(), eps=1e-6).reshape(-1, encoder_img_states[-1].shape[-1]))
+            loss += kl_loss_log_softmax_detach(F.normalize(encoder_txt_states[i].float(), eps=1e-6).reshape(-1, encoder_txt_states[i].shape[-1]), F.normalize(encoder_txt_states[-1].float(), eps=1e-6).reshape(-1, encoder_txt_states[-1].shape[-1]))
+        for i in range(0, 11):
             decoder_shallow_float = decoder_state[i].float()
-            decoder_deep_float = decoder_state[-1].float().detach()
-            loss += kl_loss_detach(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]))
+            decoder_deep_float = decoder_state[-1].float()
+            loss += kl_loss_log_softmax_detach(F.normalize(decoder_shallow_float, eps=1e-6).type_as(decoder_shallow_float).reshape(-1, decoder_shallow_float.shape[-1]), F.normalize(decoder_deep_float, eps=1e-6).type_as(decoder_shallow_float).reshape(-1, decoder_deep_float.shape[-1]))
         # for i in range(3):
         #     decoder_shallow_float = decoder_state[i].float()
         #     decoder_deep_float = decoder_state[layer_num-i].float()
         #     loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float.detach(), eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), decoder_target)
-        loss /= 3
+        loss /= 11
         return loss
     def compute_accuracy(self, model, net_output, sample):
         lprobs, target = self.get_lprobs_and_target(model, net_output, sample)

@@ -5,25 +5,26 @@
 export MASTER_PORT=1051
 
 log_dir=./stage1_logs
-save_dir=./stage1_checkpoints
+save_dir=/data/tsk/checkpoints/stage1_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/caption_data
+data_dir=/data/tsk/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
 restore_file=../../checkpoints/ofa_large.pt
 selected_cols=0,4,2
 
+experiments=6_task_loss+self_kd_6
 task=caption
 arch=ofa_large
-criterion=adjust_label_smoothed_encouraging_loss # for el
+criterion=adjust_label_smoothed_cross_entropy # for el
 label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=8
+batch_size=1
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -36,7 +37,7 @@ num_bins=1000
 patch_image_size=480
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
 drop_worst_ratio=0.05 # modified from 0.2 for el
-log_end=0.75  # for el
+
 for max_epoch in {2,}; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in {0.06,}; do
@@ -44,8 +45,8 @@ for max_epoch in {2,}; do
     for drop_worst_after in {2500,}; do
       echo "drop_worst_after "${drop_worst_after}
 
-      log_file=${log_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}_el${log_end}_".log"
-      save_path=${save_dir}/${max_epoch}"_"${warmup_ratio}"_"${drop_worst_after}_el${log_end}_
+      log_file=${log_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}_el${log_end}_".log"
+      save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}_el${log_end}_
       mkdir -p $save_path
 
       CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
@@ -76,7 +77,7 @@ for max_epoch in {2,}; do
           --attention-dropout=${attention_dropout} \
           --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
           --lr-scheduler=polynomial_decay --lr=${lr} \
-          --max-epoch=${max_epoch} --warmup-ratio=${warmup_ratio} \
+          --max-epoch=5 --warmup-ratio=0.06 \
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
@@ -99,8 +100,7 @@ for max_epoch in {2,}; do
           --num-bins=${num_bins} \
           --patch-image-size=${patch_image_size} \
           --drop-worst-ratio=${drop_worst_ratio} \
-          --drop-worst-after=${drop_worst_after} \
-          --log-end ${log_end} \
+          --drop-worst-after=2500 \
           --fp16 \
           --fp16-scale-window=512 \
           --num-workers=0 > ${log_file} 2>&1
