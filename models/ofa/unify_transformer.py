@@ -362,6 +362,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         features_only: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
+        is_teacher = False,
     ):
         """
         Run the forward pass for an encoder-decoder model.
@@ -370,7 +371,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         which are not supported by TorchScript.
         """
         encoder_out = self.encoder(
-            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens
+            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens, is_teacher=is_teacher
         )
         decoder_out = self.decoder(
             prev_output_tokens,
@@ -655,7 +656,8 @@ class TransformerEncoder(FairseqEncoder):
         code_masks: Optional[torch.Tensor] = None,
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
-        sample_patch_num: Optional[int] = None
+        sample_patch_num: Optional[int] = None,
+        is_teacher=False,
     ):
         """
         Args:
@@ -680,14 +682,24 @@ class TransformerEncoder(FairseqEncoder):
                   hidden states of shape `(src_len, batch, embed_dim)`.
                   Only populated if *return_all_hiddens* is True.
         """
-        return self.forward_scriptable(src_tokens,
-                                       src_lengths,
-                                       patch_images,
-                                       patch_images_2,
-                                       patch_masks,
-                                       return_all_hiddens,
-                                       token_embeddings,
-                                       sample_patch_num)
+        if not is_teacher:
+            return self.forward_scriptable(src_tokens,
+                                        src_lengths,
+                                        patch_images,
+                                        patch_images_2,
+                                        patch_masks,
+                                        return_all_hiddens,
+                                        token_embeddings,
+                                        sample_patch_num)
+        else:
+            return self.forward_teacher_scriptable(src_tokens,
+                                        src_lengths,
+                                        patch_images,
+                                        patch_images_2,
+                                        patch_masks,
+                                        return_all_hiddens,
+                                        token_embeddings,
+                                        sample_patch_num)
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
     # can't access the base class model in Torchscript.
@@ -884,6 +896,135 @@ class TransformerEncoder(FairseqEncoder):
             "position_embeddings": [pos_embed_cat],  # B x T x C
             "exit_layer": [idx+1, idx_y+1]
         }
+
+    def forward_teacher_scriptable(
+        self,
+        src_tokens,
+        src_lengths,
+        patch_images: Optional[torch.Tensor] = None,
+        patch_images_2: Optional[torch.Tensor] = None,
+        patch_masks: Optional[torch.Tensor] = None,
+        return_all_hiddens: bool = False,
+        token_embeddings: Optional[torch.Tensor] = None,
+        sample_patch_num: Optional[int] = None
+    ):
+        """
+        Args:
+            src_tokens (LongTensor): tokens in the source language of shape
+                `(batch, src_len)`
+            src_lengths (torch.LongTensor): lengths of each source sentence of
+                shape `(batch)`
+            return_all_hiddens (bool, optional): also return all of the
+                intermediate hidden states (default: False).
+            token_embeddings (torch.Tensor, optional): precomputed embeddings
+                default `None` will recompute embeddings
+        Returns:
+            dict:
+                - **encoder_out** (Tensor): the last encoder layer's output of
+                  shape `(src_len, batch, embed_dim)`
+                - **encoder_padding_mask** (ByteTensor): the positions of
+                  padding elements of shape `(batch, src_len)`
+                - **encoder_embedding** (Tensor): the (scaled) embedding lookup
+                  of shape `(batch, src_len, embed_dim)`
+                - **encoder_states** (List[Tensor]): all intermediate
+                  hidden states of shape `(src_len, batch, embed_dim)`.
+                  Only populated if *return_all_hiddens* is True.
+        """
+        image_embed = None
+        image_embed_2 = None
+        image_pos_embed = None
+        image_pos_embed_2 = None
+        if patch_images is not None:
+            image_embed, image_num_patches, image_padding_mask, image_position_ids, image_pos_embed = \
+                self.get_patch_images_info(patch_images, sample_patch_num, src_tokens.device)
+            image_padding_mask[~patch_masks] = True
+        if patch_images_2 is not None:
+            image_embed_2, image_num_patches_2, image_padding_mask_2, image_position_ids_2, image_pos_embed_2 = \
+                self.get_patch_images_info(patch_images_2, sample_patch_num, src_tokens.device)
+            image_padding_mask_2[~patch_masks] = True
+
+        encoder_padding_mask = src_tokens.eq(self.padding_idx)
+        if patch_images is not None:
+            encoder_padding_mask = torch.cat([image_padding_mask, encoder_padding_mask], dim=1)
+        if patch_images_2 is not None:
+            encoder_padding_mask = torch.cat([image_padding_mask_2, encoder_padding_mask], dim=1)
+        has_pads = (src_tokens.device.type == "xla" or encoder_padding_mask.any())
+
+        pos_embed = self.embed_positions(utils.new_arange(src_tokens))
+        x, encoder_embedding = self.forward_embedding(
+            src_tokens, image_embed, image_embed_2, token_embeddings,
+            pos_embed, image_pos_embed, image_pos_embed_2
+        )
+        x = torch.cat(x, dim=1)
+
+        # account for padding while computing the representation
+        if has_pads:
+            x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
+
+        # B x T x C -> T x B x C
+        x = x.transpose(0, 1)
+
+        pos_embed = self.pos_ln(pos_embed)
+        if patch_images is not None:
+            image_pos_embed = self.image_pos_ln(image_pos_embed)
+            pos_embed = torch.cat([image_pos_embed, pos_embed], dim=1)
+        if patch_images_2 is not None:
+            image_pos_embed_2 = self.image_pos_ln(image_pos_embed_2)
+            pos_embed = torch.cat([image_pos_embed_2, pos_embed], dim=1)
+
+        pos_q = self.pos_q_linear(pos_embed).view(
+            x.size(1), x.size(0), self.num_attention_heads, -1
+        ).transpose(1, 2) * self.pos_scaling
+        pos_k = self.pos_k_linear(pos_embed).view(
+            x.size(1), x.size(0), self.num_attention_heads, -1
+        ).transpose(1, 2)
+        abs_pos_bias = torch.matmul(pos_q, pos_k.transpose(2, 3))
+
+        encoder_states = []
+        return_all_hiddens = True
+    
+
+        if return_all_hiddens:
+            encoder_states.append(x)
+
+        # encoder layers
+        for idx, layer in enumerate(self.layers):
+            self_attn_bias = abs_pos_bias.clone()
+            self_attn_bias[:, :, -src_tokens.size(1):, -src_tokens.size(1):] += self.get_rel_pos_bias(src_tokens, idx)
+            if patch_images_2 is not None:
+                self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
+                    self.get_image_rel_pos_bias(image_position_ids_2, idx)
+                self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
+                    self.get_image_rel_pos_bias(image_position_ids, idx)
+            elif patch_images is not None:
+                self_attn_bias[:, :, :x.size(0) - src_tokens.size(1), :x.size(0) - src_tokens.size(1)] += \
+                    self.get_image_rel_pos_bias(image_position_ids, idx)
+            self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
+
+            x = layer(
+                x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias
+            )
+            if return_all_hiddens:
+                assert encoder_states is not None
+                encoder_states.append(x)
+
+        if self.layer_norm is not None:
+            x = self.layer_norm(x)
+
+        # The Pytorch Mobile lite interpreter does not supports returning NamedTuple in
+        # `forward` so we use a dictionary instead.
+        # TorchScript does not support mixed values so the values are all lists.
+        # The empty list is equivalent to None.
+        return {
+            "encoder_out": [x],  # T x B x C
+            "encoder_padding_mask": [encoder_padding_mask],  # B x T
+            "encoder_embedding": [],  # B x T x C
+            "encoder_states": encoder_states,  # List[T x B x C]
+            "src_tokens": [],
+            "src_lengths": [],
+            "position_embeddings": [pos_embed],  # B x T x C
+        }
+
 
     @torch.jit.export
     def reorder_encoder_out(self, encoder_out: Dict[str, List[Tensor]], new_order):
@@ -1228,7 +1369,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         alignment_heads: Optional[int] = None,
         src_lengths: Optional[Any] = None,
         return_all_hiddens: bool = False,
-        skip=True
+        skip=1
     ):
         """
         Args:
@@ -1273,7 +1414,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
-        skip=True
+        skip=1
     ):
         return self.extract_features_scriptable(
             prev_output_tokens,
@@ -1301,7 +1442,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
-        skip=True,
+        skip=1,
     ):
         """
         Similar to *forward* but only return features.
@@ -1430,7 +1571,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             # x_imitate = self.imitate_layer(x)
             x_imitate = x
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 1 and skip:       
+            if similarity > 1:       
                 # for i in range(idx + 1, len(self.layers)):
                 #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
                 #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])

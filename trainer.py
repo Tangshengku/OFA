@@ -42,7 +42,7 @@ class Trainer(object):
     communication of the gradients across workers.
     """
 
-    def __init__(self, cfg: FairseqConfig, task, model, criterion, quantizer=None):
+    def __init__(self, cfg: FairseqConfig, task, teacher_model, model, criterion, quantizer=None):
 
         if isinstance(cfg, Namespace):
             logger.warning(
@@ -91,14 +91,17 @@ class Trainer(object):
         # copy model and criterion to current device/dtype
         self._criterion = criterion
         self._model = model
+        self._teacher_model = teacher_model
         if not self.is_fsdp:
             if cfg.common.fp16:
                 assert not cfg.common.amp, "Cannot use fp16 and AMP together"
                 self._criterion = self._criterion.half()
                 self._model = self._model.half()
+                self._teacher_model = self._teacher_model.half()
             elif cfg.common.bf16:
                 self._criterion = self._criterion.to(dtype=torch.bfloat16)
                 self._model = self._model.to(dtype=torch.bfloat16)
+                self._teacher_model = self._teacher_model.to(dtype=torch.bfloat16)
             elif cfg.common.amp:
                 self._amp_retries = 0
         if (
@@ -109,6 +112,7 @@ class Trainer(object):
         ):
             self._criterion = self._criterion.to(device=self.device)
             self._model = self._model.to(device=self.device)
+            self._teacher_model = self._teacher_model.to(device=self.device)
         self.pipeline_model_parallel = cfg.distributed_training.pipeline_model_parallel
         self.last_device = None
         if self.cuda and self.pipeline_model_parallel:
@@ -253,6 +257,20 @@ class Trainer(object):
                 self._wrapped_model = models.DistributedFairseqModel(
                     self.cfg.distributed_training,
                     self._model,
+                    process_group=self.data_parallel_process_group,
+                    device=self.device,
+                )
+            else:
+                self._wrapped_model = self._model
+        return self._wrapped_model
+    
+    @property
+    def teacher_model(self):
+        if self._wrapped_model is None:
+            if self.use_distributed_wrapper:
+                self._wrapped_model = models.DistributedFairseqModel(
+                    self.cfg.distributed_training,
+                    self._teacher_model,
                     process_group=self.data_parallel_process_group,
                     device=self.device,
                 )
@@ -440,6 +458,85 @@ class Trainer(object):
             )
         logger.info(f"Finished saving checkpoint to {filename}")
 
+    def load_teacher_checkpoint(
+        self,
+        filename,
+        reset_optimizer=False,
+        reset_lr_scheduler=False,
+        optimizer_overrides=None,
+        reset_meters=False,
+    ):
+        """
+        Load all training state from a checkpoint file.
+        rank = 0 will load the checkpoint, and then broadcast it to all
+        other ranks.
+        """
+        extra_state, self._optim_history, last_optim_state = None, [], None
+
+        logger.info(f"Preparing to load teacher checkpoint {filename}")
+        is_distributed = self.data_parallel_world_size > 1
+        bexists = PathManager.isfile(filename)
+
+        if bexists:
+            load_on_all_ranks = (
+                self.cfg.checkpoint.load_checkpoint_on_all_dp_ranks
+                # TPUs don't support broadcast yet, so load checkpoints
+                # on every worker for now
+                or self.tpu
+                # FSDP requires loading checkpoint shards on all ranks
+                or (self.is_fsdp and self.cfg.distributed_training.use_sharded_state)
+                or getattr(self.cfg.model, "base_layers", 0) > 0
+            )
+
+            if load_on_all_ranks or self.data_parallel_rank == 0:
+                state = checkpoint_utils.load_checkpoint_to_cpu(
+                    filename, load_on_all_ranks=load_on_all_ranks
+                )
+                last_optim_state = state.get("last_optimizer_state", None)
+
+                # If doing zero_sharding, do not broadcast global optimizer
+                # state. Later we will broadcast sharded states to each rank
+                # to avoid memory from exploding.
+                if (
+                    not load_on_all_ranks
+                    and self.cfg.distributed_training.zero_sharding == "os"
+                    and "last_optimizer_state" in state
+                    and is_distributed
+                ):
+                    state["last_optimizer_state"] = "SHARDED"
+            else:
+                last_optim_state = None
+                state = None
+
+            if is_distributed and not load_on_all_ranks:
+                state = distributed_utils.broadcast_object(
+                    state,
+                    src_rank=0,
+                    group=self.data_parallel_process_group,
+                    dist_device=self.device,
+                )
+                
+            # load model parameters
+            try:
+                if self.cfg.checkpoint.use_ema_weights_to_init_param and "extra_state" in state and "ema" in state["extra_state"]:
+                    logger.info("use_ema_weights_to_init_param = True, will use EMA weights in the ckpt to init the model param...")
+                    ema_state_dict = state["extra_state"]["ema_fp32_params"] if "ema_fp32_params" in state["extra_state"] else state["extra_state"]["ema"]
+                    self.teacher_model.load_state_dict(
+                        ema_state_dict, strict=True, model_cfg=self.cfg.model
+                    )
+                else:
+                    self.teacher_model.load_state_dict(
+                        state["model"], strict=True, model_cfg=self.cfg.model
+                    )
+            except Exception:
+                raise Exception(
+                    "Cannot load model parameters from checkpoint {}; "
+                    "please ensure that the architectures match.".format(filename)
+                )
+            extra_state = state["extra_state"]
+
+        return extra_state
+
     def load_checkpoint(
         self,
         filename,
@@ -458,6 +555,7 @@ class Trainer(object):
         logger.info(f"Preparing to load checkpoint {filename}")
         is_distributed = self.data_parallel_world_size > 1
         bexists = PathManager.isfile(filename)
+
         if bexists:
             load_on_all_ranks = (
                 self.cfg.checkpoint.load_checkpoint_on_all_dp_ranks
@@ -773,6 +871,7 @@ class Trainer(object):
                     loss, sample_size_i, logging_output = self.task.train_step(
                         sample=sample,
                         model=self.model,
+                        teacher_model=self.teacher_model,
                         criterion=self.criterion,
                         optimizer=self.optimizer,
                         update_num=self.get_num_updates(),

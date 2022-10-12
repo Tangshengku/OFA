@@ -337,9 +337,10 @@ class SequenceGenerator(nn.Module):
         
         for step in range(max_len + 1):  # one extra step for EOS marker
             # reorder decoder internal states based on the prev choice of beams
-            skip = True
+            thres = 0.99
             # if step > (max_len + 1)/2 :
             #     skip = False
+            skip = 0.96 * thres  + 0.04 * math.exp(-1*(step+1)/(max_len+1))
             if reorder_state is not None:
                 if batch_idxs is not None:
                     # update beam indices to take into account removed sentences
