@@ -245,16 +245,6 @@ def load_checkpoint(cfg: CheckpointConfig, trainer, **passthrough_args):
             "--finetune-from-model and --restore-file (non-default value) "
             "can not be specified together: " + str(cfg)
         )
-
-    teacher_path = "/home/sht22008/tsk/projects/OFA/checkpoints/caption_base_best.pt"
-    
-    teacher_extra_state = trainer.load_teacher_checkpoint(
-        teacher_path,
-        reset_optimizer,
-        reset_lr_scheduler,
-        optimizer_overrides,
-        reset_meters=reset_meters,
-    )
     
     extra_state = trainer.load_checkpoint(
         checkpoint_path,

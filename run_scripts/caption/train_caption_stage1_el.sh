@@ -5,18 +5,18 @@
 export MASTER_PORT=1051
 
 log_dir=./stage1_logs
-save_dir=/data/tsk/checkpoints/stage1_checkpoints
+save_dir=./checkpoints/stage1_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=/data/tsk/caption_data
+data_dir=../../alldata/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=../../checkpoints/ofa_large.pt
+restore_file=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/caption/checkpoints/stage1_checkpoints/6_task_loss+self_kd_6_mse_loss_no_reshape_{0.06,}_{2500,}_el_/checkpoint_last.pt
 selected_cols=0,4,2
 
-experiments=6_task_loss+self_kd_6
+experiments=6_task_loss+self_kd_6_mse_loss_no_reshape
 task=caption
 arch=ofa_large
 criterion=adjust_label_smoothed_cross_entropy # for el
@@ -24,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=1
+batch_size=8
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -36,9 +36,9 @@ max_tgt_length=20
 num_bins=1000
 patch_image_size=480
 eval_cider_cached=${data_dir}/cider_cached_tokens/coco-valid-words.p
-drop_worst_ratio=0.05 # modified from 0.2 for el
+drop_worst_ratio=0.2 # modified from 0.2 for el
 
-for max_epoch in {2,}; do
+for max_epoch in {5,}; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in {0.06,}; do
     echo "warmup_ratio "${warmup_ratio}
@@ -49,11 +49,12 @@ for max_epoch in {2,}; do
       save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}_el${log_end}_
       mkdir -p $save_path
 
-      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=1,2 python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=${MASTER_PORT} ../../train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
           --user-dir=${user_dir} \
+          --freeze-resnet\
           --restore-file=${restore_file} \
           --reset-optimizer --reset-dataloader --reset-meters \
           --save-dir=${save_path} \
@@ -81,8 +82,8 @@ for max_epoch in {2,}; do
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
-          --save-interval=1 --validate-interval=1 \
-          --save-interval-updates=500 --validate-interval-updates=500 \
+          --save-interval=1 --validate-interval=2000 \
+          --save-interval-updates=2000 --validate-interval-updates=2000 \
           --eval-cider \
           --eval-cider-cached-tokens=${eval_cider_cached} \
           --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \
