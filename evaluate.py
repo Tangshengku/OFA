@@ -127,6 +127,8 @@ def main(cfg: DictConfig, **kwargs):
     encoder_exit_layers = []
     encoder_txt_exit_layers = []
     decoder_exit_layers = []
+    all_decoder_exit_layers = []
+    times = []
     score_sum = torch.FloatTensor([0]).cuda()
     score_cnt = torch.FloatTensor([0]).cuda()
     for sample in progress:
@@ -135,8 +137,9 @@ def main(cfg: DictConfig, **kwargs):
         sample = utils.move_to_cuda(sample) if use_cuda else sample
         sample = utils.apply_to_sample(apply_half, sample) if cfg.common.fp16 else sample
         with torch.no_grad():
-            result, scores, exit_layer, txt_exit_layer, decoder_layer = eval_step(task, generator, models, sample, **kwargs)
+            result, scores, exit_layer, txt_exit_layer, decoder_layer, time_per_sample = eval_step(task, generator, models, sample, **kwargs)
         results += result
+        times.append(time_per_sample)
         encoder_exit_layers.append(exit_layer)
         decoder_exit_layers.append(decoder_layer)
         encoder_txt_exit_layers.append(txt_exit_layer)
@@ -146,6 +149,7 @@ def main(cfg: DictConfig, **kwargs):
     print("encoder txt exit layer: {}", sum(encoder_txt_exit_layers)/len(encoder_txt_exit_layers))
     print("encoder img exit layer: {}", sum(encoder_exit_layers)/len(encoder_exit_layers))
     print("decoder exit layer: {}", sum(decoder_exit_layers)/len(decoder_exit_layers))
+    print("inference time: {}", sum(times)/len(times))
 
 
     merge_results(task, cfg, logger, score_cnt, score_sum, results)

@@ -370,7 +370,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         which are not supported by TorchScript.
         """
         encoder_out = self.encoder(
-            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens, is_teacher=is_teacher
+            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens
         )
         decoder_out = self.decoder(
             prev_output_tokens,
@@ -424,8 +424,8 @@ class TransformerEncoder(FairseqEncoder):
         self.num_attention_heads = args.encoder_attention_heads
         # self.txt_imitate = ImitationNet(embed_dim)
         # self.image_imitate = ImitationNet(embed_dim)
-        self.txt_f1 = nn.Linear(embed_dim, 2)
-        self.img_f1 = nn.Linear(embed_dim, 2)
+        # self.txt_f1 = nn.Linear(embed_dim, 2)
+        # self.img_f1 = nn.Linear(embed_dim, 2)
 
 
         self.embed_tokens = embed_tokens
@@ -655,8 +655,7 @@ class TransformerEncoder(FairseqEncoder):
         code_masks: Optional[torch.Tensor] = None,
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
-        sample_patch_num: Optional[int] = None,
-        
+        sample_patch_num: Optional[int] = None
     ):
         """
         Args:
@@ -681,16 +680,14 @@ class TransformerEncoder(FairseqEncoder):
                   hidden states of shape `(src_len, batch, embed_dim)`.
                   Only populated if *return_all_hiddens* is True.
         """
-        
         return self.forward_scriptable(src_tokens,
-                                        src_lengths,
-                                        patch_images,
-                                        patch_images_2,
-                                        patch_masks,
-                                        return_all_hiddens,
-                                        token_embeddings,
-                                        sample_patch_num)
-        
+                                       src_lengths,
+                                       patch_images,
+                                       patch_images_2,
+                                       patch_masks,
+                                       return_all_hiddens,
+                                       token_embeddings,
+                                       sample_patch_num)
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
     # can't access the base class model in Torchscript.
@@ -774,6 +771,15 @@ class TransformerEncoder(FairseqEncoder):
         if patch_images_2 is not None:
             image_pos_embed_2 = self.image_pos_ln(image_pos_embed_2)
             pos_embed = torch.cat([image_pos_embed_2, pos_embed], dim=1)
+        
+        # pos_q = self.pos_q_linear(pos_embed_cat).view(
+        #     x.size(1), x.size(0)+image_x.size(0), self.num_attention_heads, -1
+        # ).transpose(1, 2) * self.pos_scaling
+        # pos_k = self.pos_k_linear(pos_embed_cat).view(
+        #     x.size(1), x.size(0)+image_x.size(0), self.num_attention_heads, -1
+        # ).transpose(1, 2)
+        # abs_pos_bias_concat = torch.matmul(pos_q, pos_k.transpose(2, 3))
+
 
         pos_q = self.pos_q_linear(pos_embed).view(
             x.size(1), x.size(0), self.num_attention_heads, -1
@@ -829,8 +835,8 @@ class TransformerEncoder(FairseqEncoder):
             # x_imitate = self.txt_imitate(x)
             x_imitate = x
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states[-1].clone().contiguous().view(1, -1)) )
-            # if similarity > 1:
-            #     break
+            if similarity > 1:
+                break
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
@@ -860,16 +866,29 @@ class TransformerEncoder(FairseqEncoder):
             )
             # image_x_imitate = self.image_imitate(image_x)
             image_x_imitate = image_x
-            similarity = torch.cosine_similarity(F.normalize(image_x_imitate.clone().contiguous().view(-1, image_x_imitate.shape[-1]), eps=1e-6), F.normalize(encoder_states_img[-1].clone().contiguous().view(-1, encoder_states_img[-1].shape[-1]), eps=1e-6), eps=1e-6)
-            similarity = similarity.mean()
-            if similarity > 1:
-                print(similarity)
+            similarity = torch.cosine_similarity(F.normalize(image_x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states_img[-1].clone().contiguous().view(1, -1)) )
+            if similarity > 0.9:
                 break
             if return_all_hiddens:
                 assert encoder_states_img is not None
                 encoder_states_img.append(image_x)
         
         x = torch.cat([image_x, x])
+        # idx = 5
+        # self_attn_bias = abs_pos_bias_concat.clone()
+        # self_attn_bias[:,:,-src_tokens.size(1):, -src_tokens.size(1):] += self.get_rel_pos_bias(src_tokens, idx)
+        # if patch_images_2 is not None:
+        #     self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
+        #         self.get_image_rel_pos_bias(image_position_ids_2, idx)
+        #     self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
+        #         self.get_image_rel_pos_bias(image_position_ids, idx)
+        # elif patch_images is not None:
+        #     image_abs_pos_bias[:,:, :x.size(0)- src_tokens.size(1), :x.size(0)-src_tokens.size(1)] += \
+        #         self.get_image_rel_pos_bias(image_position_ids, idx)
+        # self_attn_bias = self_attn_bias.reshape(-1, self_attn_bias.size(2), self_attn_bias.size(2))
+           
+        # x = self.layers[-1](x, encoder_padding_mask=encoder_padding_mask_cat if has_pads else None, self_attn_bias=self_attn_bias, w=w)
+        
         if self.layer_norm is not None:
             x = self.layer_norm(x)
 
@@ -1433,10 +1452,13 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             # x_imitate = self.imitate_layer(x)
             x_imitate = x
             similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 1:       
-                # for i in range(idx + 1, len(self.layers)):
-                #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
-                #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
+            # out = self.output_layer(self.layer_norm(x).transpose(0, 1))
+            # out = self.get_normalized_probs([out], log_probs=True)
+            # similarity = torch.max(out.view(-1))
+            if similarity>1:       
+            #     # for i in range(idx + 1, len(self.layers)):
+            #     #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
+            #     #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
                 break
             inner_states.append(x)
             inner_out_states.append(self.output_layer(self.layer_norm(x).transpose(0, 1)))

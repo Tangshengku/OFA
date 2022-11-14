@@ -245,7 +245,7 @@ def load_checkpoint(cfg: CheckpointConfig, trainer, **passthrough_args):
             "--finetune-from-model and --restore-file (non-default value) "
             "can not be specified together: " + str(cfg)
         )
-    
+
     extra_state = trainer.load_checkpoint(
         checkpoint_path,
         reset_optimizer,

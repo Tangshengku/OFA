@@ -8,7 +8,7 @@
 # To use the shuffled data (if exists), please uncomment the Line 24.
 
 # Number of GPUs per GPU worker
-GPUS_PER_NODE=7 
+GPUS_PER_NODE=5 
 # Number of GPU workers, for single-worker training, please set to 1
 WORKER_CNT=1
 # The ip address of the rank-0 worker, for single-worker training, please set to localhost
@@ -17,29 +17,29 @@ export MASTER_ADDR=localhost
 export MASTER_PORT=8314
 # The rank of this worker, should be in {0, ..., WORKER_CNT-1}, for single-worker training, please set to 0
 export RANK=0 
-export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,4,5,6,7
 
-data_dir=/data/tsk/vqa_data
+data_dir=/data2/tsk/vqa_data
 data=${data_dir}/vqa_train.tsv,${data_dir}/vqa_val.tsv
 # Note: If you have shuffled the data in advance, please uncomment the line below.
 # data=${data_dir}/vqa_train_1.tsv,${data_dir}/vqa_train_2.tsv,${data_dir}/vqa_train_3.tsv,${data_dir}/vqa_train_4.tsv,${data_dir}/vqa_train_5.tsv,${data_dir}/vqa_train_6.tsv,${data_dir}/vqa_train_7.tsv,${data_dir}/vqa_train_8.tsv,${data_dir}/vqa_train_9.tsv,${data_dir}/vqa_train_10.tsv,${data_dir}/vqa_val.tsv
-ans2label_file=/data/tsk/vqa_data/trainval_ans2label.pkl
-restore_file=../../checkpoints/ofa_base.pt
+ans2label_file=/data2/tsk/vqa_data/trainval_ans2label.pkl
+restore_file=/data2/tsk/checkpoints/ofa_base.pt
 selected_cols=0,5,2,3,4
 
 log_dir=./vqa_logs
-save_dir=/data/tsk/checkpoints/ofa_vqa_checkpoints
+save_dir=/data2/tsk/checkpoints/ofa_vqa_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-experiments=decompose
+experiments=1_6_2_5_3_4_cosloss
 task=vqa_gen
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.1
-batch_size=2
+batch_size=8
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1

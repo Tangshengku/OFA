@@ -10,12 +10,12 @@ bpe_dir=../../utils/BPE
 # dev or test
 split=test
 
-data=../../alldata/snli_ve/snli_ve_${split}.tsv
-path=/home/dongk/dkgroup/tsk/projects/OFA/run_scripts/snli_ve/checkpoints/ofa_snli_ve/shallow_deep_freeze/checkpoint.best_snli_score_0.8870.pt
+data=/data2/tsk/snli_ve/snli_ve_${split}.tsv
+path=/data2/tsk/checkpoints/ofa_snli_ve/6_task_loss_1e-4/checkpoint.best_snli_score_0.8870.pt
 result_path=../../results/snli_ve
 selected_cols=0,2,3,4,5
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../evaluate.py \
+CUDA_VISIBLE_DEVICES=0 python3 -m torch.distributed.launch --nproc_per_node=1 --master_port=${MASTER_PORT} ../../evaluate.py \
     ${data} \
     --path=${path} \
     --user-dir=${user_dir} \

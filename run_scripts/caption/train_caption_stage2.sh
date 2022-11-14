@@ -5,26 +5,27 @@
 export MASTER_PORT=1052
 
 log_dir=./stage2_logs
-save_dir=./stage2_checkpoints
+save_dir=/data2/tsk/checkpoints/stage2_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../dataset/caption_data
+data_dir=/data2/tsk/caption_data
 data=${data_dir}/caption_stage2_train.tsv,${data_dir}/caption_val.tsv
-restore_file=../../checkpoints/caption_stage1_best.pt
+restore_file=/data2/tsk/checkpoints/stage2_checkpoints/6_task_loss+self_kd_large_together_stage2_bs56_5/checkpoint_last.pt
 selected_cols=1,4,2
 
+experiments=6_task_loss+self_kd_large_together_stage2_bs56
 task=caption
 arch=ofa_large
 criterion=scst_reward_criterion
 label_smoothing=0.1
-lr=1e-5
+lr=6e-6
 max_epoch=5
 warmup_ratio=0.06
-batch_size=2
-update_freq=4
+batch_size=1
+update_freq=16
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.0
 decoder_drop_path_rate=0.0
@@ -39,19 +40,20 @@ scst_cider_cached=${data_dir}/cider_cached_tokens/coco-train-words.p
 
 for lr in {1e-5,}; do
   echo "lr "${lr}
-  for max_epoch in {3,}; do
+  for max_epoch in {5,}; do
     echo "max_epoch "${max_epoch}
 
-    log_file=${log_dir}/${lr}"_"${max_epoch}".log"
-    save_path=${save_dir}/${lr}"_"${max_epoch}
+    log_file=${log_dir}/${experiments}"_"${max_epoch}".log"
+    save_path=${save_dir}/${experiments}"_"${max_epoch}
     mkdir -p $save_path
 
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=8 --master_port=${MASTER_PORT} ../../train.py \
+    CUDA_VISIBLE_DEVICES=0,1,2 python3 -m torch.distributed.launch --nproc_per_node=3 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \
         --user-dir=${user_dir} \
         --restore-file=${restore_file} \
+        --freeze-resnet\
         --reset-optimizer --reset-dataloader --reset-meters \
         --save-dir=${save_path} \
         --task=${task} \
@@ -77,7 +79,7 @@ for lr in {1e-5,}; do
         --log-format=simple --log-interval=10 \
         --fixed-validation-seed=7 \
         --no-epoch-checkpoints --keep-best-checkpoints=1 \
-        --save-interval=1 --validate-interval=1 \
+        --save-interval=1 --validate-interval=500 \
         --save-interval-updates=500 --validate-interval-updates=500 \
         --eval-cider \
         --eval-cider-cached-tokens=${eval_cider_cached} \

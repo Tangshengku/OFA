@@ -333,14 +333,17 @@ class SequenceGenerator(nn.Module):
         else:
             original_batch_idxs = torch.arange(0, bsz).type_as(tokens)
 
-        decoder_exit_layers = []
+        decoder_exit_layers = [[],[]]
         
         for step in range(max_len + 1):  # one extra step for EOS marker
             # reorder decoder internal states based on the prev choice of beams
-            thres = 0.99
-            # if step > (max_len + 1)/2 :
-            #     skip = False
-            skip = 0.96 * thres  + 0.04 * math.exp(-1*(step+1)/(max_len+1))
+            # skip = True
+            
+            if step < (max_len + 1)/3 :
+                skip = 1
+            else:
+                thres = 0.99
+                skip = 0.92*thres + 0.08*math.exp(-1*(step+1)/(max_len+1))
             if reorder_state is not None:
                 if batch_idxs is not None:
                     # update beam indices to take into account removed sentences
@@ -369,7 +372,8 @@ class SequenceGenerator(nn.Module):
                     prefix_tokens=prefix_tokens,
                     skip=skip
                 )
-                decoder_exit_layers.append(decoder_exit_layer)
+                decoder_exit_layers[0].append(decoder_exit_layer*(step+1))
+                decoder_exit_layers[1].append(6*(step+1))
 
             if self.lm_model is not None:
                 lm_out = self.lm_model(tokens[:, : step + 1])
@@ -604,7 +608,7 @@ class SequenceGenerator(nn.Module):
             finalized[sent] = torch.jit.annotate(
                 List[Dict[str, Tensor]], finalized[sent]
             )
-        return finalized, encoder_exit_layer, sum(decoder_exit_layers)/len(decoder_exit_layers)
+        return finalized, encoder_exit_layer, sum(decoder_exit_layers[0])/sum(decoder_exit_layers[1])
 
     def _prefix_tokens(
         self, step: int, lprobs, scores, tokens, prefix_tokens, beam_size: int

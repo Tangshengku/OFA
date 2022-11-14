@@ -8,6 +8,7 @@ import math
 import json
 from itertools import chain
 import os
+import time
 
 import torch
 import torch.distributed as dist
@@ -39,7 +40,7 @@ def eval_caption(task, generator, models, sample, **kwargs):
     for i, sample_id in enumerate(sample["id"].tolist()):
         detok_hypo_str = decode_fn(hypos[i][0]["tokens"], task.tgt_dict, task.bpe, generator)
         results.append({"image_id": str(sample_id), "caption": detok_hypo_str.translate(transtab).strip()})
-    return results, None, encoder_layer[0], encoder_layer[1], decoder_layer
+    return results, None, encoder_layer[0], encoder_layer[1], decoder_layer, 0
 
 
 def eval_vqa_gen(task, generator, models, sample, **kwargs):
@@ -146,12 +147,21 @@ def eval_refcoco(task, generator, models, sample, **kwargs):
 
 
 def eval_snli_ve(task, generator, models, sample, **kwargs):
+    torch.cuda.synchronize()
+    start = time.perf_counter()
+    # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False) as prof:
     encoder_out = models[0].encoder(
         sample["net_input"]["src_tokens"],
         src_lengths=sample["net_input"]["src_lengths"],
         patch_images=sample["net_input"]["patch_images"],
         patch_masks=sample["net_input"]["patch_masks"]
     )
+    torch.cuda.synchronize()
+    end = time.perf_counter()
+    encoder_time = end - start
+    decoder_time = 0
+    # print("encoder time: ")
+    # print(prof.table())
     encoder_layer = encoder_out["exit_layer"]
     device = sample["net_input"]["src_tokens"].device
     eos_item = torch.tensor([task.src_dict.eos()])
@@ -188,9 +198,16 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         new_encoder_out["position_embeddings"] = [
             encoder_out["position_embeddings"][0].repeat_interleave(valid_size, dim=0)
         ]
-
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        # with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False) as prof:
         decoder_out = models[0].decoder(valid_prev_output, encoder_out=new_encoder_out)
+        torch.cuda.synchronize()
+        end = time.perf_counter()
+        decoder_time = end - start
         decoder_layer = decoder_out[1]["exit_layer"]
+        # print("decoder time: ")
+        # print(prof.table())
         decoder_out[0].masked_fill_(~valid_constraint_masks, -math.inf)
         lprobs = models[0].get_normalized_probs(decoder_out, log_probs=True)
         scores = lprobs.gather(dim=-1, index=valid_tgt.unsqueeze(-1)).squeeze(-1)
@@ -199,12 +216,14 @@ def eval_snli_ve(task, generator, models, sample, **kwargs):
         scores = scores.sum(1)
         scores = scores.view(-1, valid_size)
         valid_result.append(scores)
+    torch.cuda.synchronize()
+    end = time.time()
     valid_result = torch.cat(valid_result, dim=-1)
     predicts = valid_result.argmax(1).tolist()
     hyps = [task.index2ans[predict_index] for predict_index in predicts]
     results = [{"uniq_id": id, "answer": hyp} for id, hyp in zip(sample["id"].tolist(), hyps)]
     scores = [ref_dict.get(hyp, 0) for ref_dict, hyp in zip(sample['ref_dict'], hyps)]
-    return results, scores, encoder_layer[0], encoder_layer[1], decoder_layer
+    return results, scores, encoder_layer[0], encoder_layer[1], decoder_layer, encoder_time + decoder_time
 
 
 def eval_image_gen(task, generator, models, sample, **kwargs):

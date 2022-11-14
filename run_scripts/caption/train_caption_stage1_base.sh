@@ -5,18 +5,18 @@
 export MASTER_PORT=1061
 
 log_dir=./stage1_logs
-save_dir=/data/tsk/checkpoints/caption/stage1_checkpoints
+save_dir=/data2/tsk/checkpoints/stage1_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=/data/tsk/caption_data
+data_dir=/data2/tsk/caption_data
 data=${data_dir}/caption_stage1_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/home/sht22008/tsk/projects/OFA/checkpoints/ofa_base.pt
+restore_file=/data2/tsk/checkpoints/ofa_base.pt
 selected_cols=0,4,2
 
-experiments=6_task_loss+6_representation_kd_no_self_kd
+experiments=6_task_loss
 task=caption
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
@@ -24,7 +24,7 @@ label_smoothing=0.1
 lr=1e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=4
+batch_size=16
 update_freq=4
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -49,7 +49,7 @@ for max_epoch in {5,}; do
       save_path=${save_dir}/${experiments}"_"${warmup_ratio}"_"${drop_worst_after}
       mkdir -p $save_path
 
-      CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
+      CUDA_VISIBLE_DEVICES=3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=5 --master_port=${MASTER_PORT} ../../train.py \
           $data \
           --selected-cols=${selected_cols} \
           --bpe-dir=${bpe_dir} \
@@ -81,8 +81,8 @@ for max_epoch in {5,}; do
           --log-format=simple --log-interval=10 \
           --fixed-validation-seed=7 \
           --no-epoch-checkpoints --keep-best-checkpoints=1 \
-          --save-interval=1 --validate-interval=10 \
-          --save-interval-updates=10 --validate-interval-updates=1000 \
+          --save-interval=1 --validate-interval=500 \
+          --save-interval-updates=500 --validate-interval-updates=1000 \
           --eval-cider \
           --eval-cider-cached-tokens=${eval_cider_cached} \
           --eval-args='{"beam":5,"max_len_b":16,"no_repeat_ngram_size":3}' \

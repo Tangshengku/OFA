@@ -5,26 +5,27 @@
 export MASTER_PORT=7061
 
 log_dir=./logs
-save_dir=./checkpoints/ofa_snli_ve
+save_dir=/data2/tsk/checkpoints/ofa_snli_ve
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=../../alldata/snli_ve
+experiments=test
+data_dir=/data2/tsk/snli_ve
 data=${data_dir}/snli_ve_train.tsv,${data_dir}/snli_ve_dev.tsv
-restore_file=../../checkpoints/ofa_base.pt
+restore_file=/data2/tsk/checkpoints/ofa_base.pt
 selected_cols=0,2,3,4,5
 
-experiments=encoder_decoder_cos_sim_to_layer6_detach
+experiments=6_task_loss+decompose_5_layers
 task=snli_ve
 arch=ofa_base
 criterion=adjust_label_smoothed_cross_entropy
 label_smoothing=0.0
-lr=1e-5
+lr=3e-5
 max_epoch=5
 warmup_ratio=0.06
-batch_size=16
+batch_size=8
 update_freq=8
 resnet_drop_path_rate=0.0
 encoder_drop_path_rate=0.1
@@ -37,7 +38,7 @@ num_bins=1000
 patch_image_size=480
 prompt_type="prev_output"
 
-for max_epoch in {5,}; do
+for max_epoch in {6,}; do
   echo "max_epoch "${max_epoch}
   for lr in {1e-4,}; do
     echo "lr "${lr}
@@ -46,7 +47,7 @@ for max_epoch in {5,}; do
     save_path=${save_dir}/${experiments}"_"${lr}
     mkdir -p $save_path
 
-~/anaconda3/envs/ofa/bin/python3 -m torch.distributed.launch --nnodes=1 --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
+    CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 ~/anaconda3/envs/ofa/bin/python -m torch.distributed.launch --nproc_per_node=7 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \
@@ -58,7 +59,7 @@ for max_epoch in {5,}; do
         --arch=${arch} \
         --criterion=${criterion} \
         --label-smoothing=${label_smoothing} \
-        --batch-size=32 \
+        --batch-size=8 \
         --update-freq=${update_freq} \
         --encoder-normalize-before \
         --decoder-normalize-before \
@@ -73,8 +74,8 @@ for max_epoch in {5,}; do
         --dropout=${dropout} \
         --attention-dropout=${attention_dropout} \
         --weight-decay=0.01 --optimizer=adam --adam-betas="(0.9,0.999)" --adam-eps=1e-08 --clip-norm=1.0 \
-        --lr-scheduler=polynomial_decay --lr=1e-4 \
-        --max-epoch=10 --warmup-ratio=${warmup_ratio} \
+        --lr-scheduler=polynomial_decay --lr=3e-5 \
+        --max-epoch=6 --warmup-ratio=${warmup_ratio} \
         --log-format=simple --log-interval=10 \
         --fixed-validation-seed=7 \
         --keep-best-checkpoints=1 \

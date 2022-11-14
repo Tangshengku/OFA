@@ -18,7 +18,7 @@ selected_cols=0,4,2
 
 task=caption
 arch=ofa_large
-criterion=adjust_label_smoothed_encouraging_loss # for el
+criterion=adjust_label_smoothed_cross_entropy # for el
 label_smoothing=0.1
 lr=1e-5
 max_epoch=5
@@ -39,7 +39,7 @@ drop_worst_ratio=0.05 # modified from 0.2 for el
 drop_best_ratio=0.05
 drop_best_after=2500
 log_end=0.75  # for el
-for max_epoch in {2,}; do
+for max_epoch in {3,}; do
   echo "max_epoch "${max_epoch}
   for warmup_ratio in {0.06,}; do
     echo "warmup_ratio "${warmup_ratio}

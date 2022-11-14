@@ -275,6 +275,7 @@ class BaseFairseqModel(nn.Module):
     def hub_models(cls):
         return {}
 
+
 class FairseqEncoderDecoderModel(BaseFairseqModel):
     """Base class for encoder-decoder models.
 

@@ -238,8 +238,8 @@ class ScstRewardCriterion(FairseqCriterion):
         return lprobs, gen_target
 
     def compute_cos_similarity_loss(self, net_output):
-
-        cos_func = CosineEmbeddingLoss()
+        # cos_func = CosineEmbeddingLoss()
+        cos_func = MSELoss()
         encoder_txt_states, encoder_img_states = net_output[2]
         decoder_state = net_output[1]["inner_states"]
 
@@ -252,20 +252,20 @@ class ScstRewardCriterion(FairseqCriterion):
         decoder_target = torch.ones(decoder_state[0].reshape(-1, 768).shape[0], device=decoder_state[0].device)
 
         loss = 0.0
-        layer_num = 5
+        layer_num = 3
         img_loss = 0.0
         txt_loss = 0.0
         decoder_loss = 0.0
         # loss += cos_func(F.normalize(encoder_img_states[0]).reshape(-1, 768), F.normalize(encoder_img_states[-1]).reshape(-1, 768), img_target)
         # loss += cos_func(F.normalize(encoder_txt_states[0]).reshape(-1, 768), F.normalize(encoder_txt_states[-1]).reshape(-1, 768), txt_target)
         # loss += cos_func(F.normalize(decoder_state[0]).reshape(-1, 768), F.normalize(decoder_state[-1]).reshape(-1, 768), decoder_target)
-        for i in range(0, 3):
-            loss += cos_func(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[layer_num-i].detach(), eps=1e-6).reshape(-1, 768), img_target)
-            loss += cos_func(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[layer_num-i].detach(), eps=1e-6).reshape(-1, 768), txt_target)
-        for i in range(0, 3):
+        for i in range(0, 5):
+            loss += cos_func(F.normalize(encoder_img_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_img_states[-1].detach(), eps=1e-6).reshape(-1, 768))
+            loss += cos_func(F.normalize(encoder_txt_states[i], eps=1e-6).reshape(-1, 768), F.normalize(encoder_txt_states[-1].detach(), eps=1e-6).reshape(-1, 768))
+        for i in range(0, 5):
             decoder_shallow_float = decoder_state[i].float()
-            decoder_deep_float = decoder_state[layer_num-i].float().detach()
-            loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), decoder_target)
+            decoder_deep_float = decoder_state[-1].float().detach()
+            loss += cos_func(F.normalize(decoder_shallow_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]), F.normalize(decoder_deep_float, eps=1e-6).reshape(-1, 768).type_as(decoder_state[0]))
         # for i in range(3):
         #     decoder_shallow_float = decoder_state[i].float()
         #     decoder_deep_float = decoder_state[layer_num-i].float()
@@ -278,10 +278,10 @@ class ScstRewardCriterion(FairseqCriterion):
         reward, scores = self.get_reward_and_scores(gen_res, gt_res, device=sample["target"].device)
         net_output, gen_target_tokens = self.get_net_output(model, sample, gen_target)
         loss_all = 0.0
-        # for state in net_output[1]["inner_out_states"]:
-        gen_lprobs, gen_target_tokens = self.get_lprobs_and_target(model, net_output, gen_target_tokens)
-        loss, ntokens = scst_loss(gen_lprobs, gen_target_tokens, reward, ignore_index=self.padding_idx, reduce=reduce)
-        loss_all += loss
+        for state in net_output[1]["inner_out_states"]:
+            gen_lprobs, gen_target_tokens = self.get_lprobs_and_target(model, [state], gen_target_tokens)
+            loss, ntokens = scst_loss(gen_lprobs, gen_target_tokens, reward, ignore_index=self.padding_idx, reduce=reduce)
+            loss_all += loss
         nsentences = gen_target_tokens.size(0)
         # loss += self.compute_cos_similarity_loss(net_output)
         return loss_all, scores.sum(), ntokens, nsentences

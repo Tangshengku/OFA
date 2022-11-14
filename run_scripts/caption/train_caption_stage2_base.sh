@@ -5,18 +5,18 @@
 export MASTER_PORT=1062
 
 log_dir=./stage2_logs
-save_dir=/data/tsk/checkpoints/caption/stage2_checkpoints
+save_dir=/data2/tsk/checkpoints/stage2_checkpoints
 mkdir -p $log_dir $save_dir
 
 bpe_dir=../../utils/BPE
 user_dir=../../ofa_module
 
-data_dir=/data/tsk/caption_data
+data_dir=/data2/tsk/caption_data
 data=${data_dir}/caption_stage2_train.tsv,${data_dir}/caption_val.tsv
-restore_file=/data/tsk/checkpoints/caption/stage1_checkpoints/6_task_loss+self_kd_layer_representation_6_training_together_{0.06,}_{6000,}/checkpoint.best_cider_1.3560.pt
+restore_file=/data2/tsk/checkpoints/stage1_checkpoints/6_task_loss_0.06_6000/checkpoint.best_cider_1.3580.pt
 selected_cols=1,4,2
 
-experments=6_task_loss+self_kd_layer_representation_6_training_together_final_layer_in_stage2
+experments=6_task_loss
 task=caption
 arch=ofa_base
 criterion=scst_reward_criterion
@@ -47,7 +47,7 @@ for lr in {1e-5,}; do
     save_path=${save_dir}/${experments}"_"${max_epoch}
     mkdir -p $save_path
 
-    CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 --master_port=${MASTER_PORT} ../../train.py \
+    CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 python3 -m torch.distributed.launch --nproc_per_node=6 --master_port=${MASTER_PORT} ../../train.py \
         $data \
         --selected-cols=${selected_cols} \
         --bpe-dir=${bpe_dir} \

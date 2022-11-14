@@ -91,17 +91,14 @@ class Trainer(object):
         # copy model and criterion to current device/dtype
         self._criterion = criterion
         self._model = model
-        
         if not self.is_fsdp:
             if cfg.common.fp16:
                 assert not cfg.common.amp, "Cannot use fp16 and AMP together"
                 self._criterion = self._criterion.half()
                 self._model = self._model.half()
-                
             elif cfg.common.bf16:
                 self._criterion = self._criterion.to(dtype=torch.bfloat16)
                 self._model = self._model.to(dtype=torch.bfloat16)
-
             elif cfg.common.amp:
                 self._amp_retries = 0
         if (
@@ -261,7 +258,7 @@ class Trainer(object):
                 )
             else:
                 self._wrapped_model = self._model
-        return self._wrapped_model  
+        return self._wrapped_model
 
     @property
     def ema(self):
@@ -461,7 +458,6 @@ class Trainer(object):
         logger.info(f"Preparing to load checkpoint {filename}")
         is_distributed = self.data_parallel_world_size > 1
         bexists = PathManager.isfile(filename)
-
         if bexists:
             load_on_all_ranks = (
                 self.cfg.checkpoint.load_checkpoint_on_all_dp_ranks
