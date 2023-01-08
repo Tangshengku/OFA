@@ -80,18 +80,6 @@ def make_image_bucket_position(bucket_size, num_relative_distance):
     relative_position_index[0, 0] = num_relative_distance - 1
     return relative_position_index
 
-class ImitationNet(nn.Module): 
-    def __init__(self, hidden_size):
-        super().__init__()
-        # self.weight = nn.Parameter(torch.zeros(config.n_layer, config.n_embd, config.n_embd).
-        #                            normal_(mean=0.0, std=config.initializer_range))
-        # self.bias = nn.Parameter(torch.zeros(config.n_layer, config.n_embd))
-        self.linear = nn.Linear(hidden_size, hidden_size)
-        # self.act = nn.Tanh()
-
-    def forward(self, hidden_representation):
-        approximate_representation = self.linear(hidden_representation)
-        return approximate_representation
 
 @register_model("unify_transformer")
 class TransformerModel(FairseqEncoderDecoderModel):
@@ -340,11 +328,11 @@ class TransformerModel(FairseqEncoderDecoderModel):
 
     @classmethod
     def build_encoder(cls, args, src_dict, embed_tokens):
-        return TransformerEncoder(args, src_dict, embed_tokens)
+        return TransformerEncoder_MuE(args, src_dict, embed_tokens)
 
     @classmethod
     def build_decoder(cls, args, tgt_dict, embed_tokens):
-        return TransformerDecoder(
+        return TransformerDecoder_MuE(
             args,
             tgt_dict,
             embed_tokens,
@@ -397,7 +385,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
         return self.get_normalized_probs_scriptable(net_output, log_probs, sample)
 
 
-class TransformerEncoder(FairseqEncoder):
+class TransformerEncoder_MuE(FairseqEncoder):
     """
     Transformer encoder consisting of *args.encoder_layers* layers. Each layer
     is a :class:`TransformerEncoderLayer`.
@@ -422,12 +410,6 @@ class TransformerEncoder(FairseqEncoder):
         self.padding_idx = embed_tokens.padding_idx
         self.max_source_positions = args.max_source_positions
         self.num_attention_heads = args.encoder_attention_heads
-        # self.txt_imitate = ImitationNet(embed_dim)
-        # self.image_imitate = ImitationNet(embed_dim)
-        # self.txt_f1 = nn.Linear(embed_dim, 2)
-        # self.img_f1 = nn.Linear(embed_dim, 2)
-
-
         self.embed_tokens = embed_tokens
 
         self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
@@ -518,12 +500,7 @@ class TransformerEncoder(FairseqEncoder):
         self.register_buffer("token_rp_bucket", token_rp_bucket)
         self.register_buffer("image_rp_bucket", image_rp_bucket)
         self.entangle_position_embedding = args.entangle_position_embedding
-        # self.freeze_param()
     
-    def freeze_param(self):
-        for name, param in self.named_parameters():
-            if "imitate" not in name:
-                param.requires_grad_ = False
 
     def build_encoder_layer(self, args, drop_path_rate=0.0):
         layer = TransformerEncoderLayer(args, drop_path_rate=drop_path_rate)
@@ -649,6 +626,8 @@ class TransformerEncoder(FairseqEncoder):
         self,
         src_tokens,
         src_lengths,
+        is_train: bool = True,
+        thres : Optional[float] = [1.0, 1.0],
         patch_images: Optional[torch.Tensor] = None,
         patch_images_2: Optional[torch.Tensor] = None,
         patch_masks: Optional[torch.Tensor] = None,
@@ -682,6 +661,8 @@ class TransformerEncoder(FairseqEncoder):
         """
         return self.forward_scriptable(src_tokens,
                                        src_lengths,
+                                       is_train,
+                                       thres,
                                        patch_images,
                                        patch_images_2,
                                        patch_masks,
@@ -697,6 +678,8 @@ class TransformerEncoder(FairseqEncoder):
         self,
         src_tokens,
         src_lengths,
+        is_train: bool = True,
+        thres : Optional[float] = [1.0, 1.0],
         patch_images: Optional[torch.Tensor] = None,
         patch_images_2: Optional[torch.Tensor] = None,
         patch_masks: Optional[torch.Tensor] = None,
@@ -772,14 +755,6 @@ class TransformerEncoder(FairseqEncoder):
             image_pos_embed_2 = self.image_pos_ln(image_pos_embed_2)
             pos_embed = torch.cat([image_pos_embed_2, pos_embed], dim=1)
         
-        # pos_q = self.pos_q_linear(pos_embed_cat).view(
-        #     x.size(1), x.size(0)+image_x.size(0), self.num_attention_heads, -1
-        # ).transpose(1, 2) * self.pos_scaling
-        # pos_k = self.pos_k_linear(pos_embed_cat).view(
-        #     x.size(1), x.size(0)+image_x.size(0), self.num_attention_heads, -1
-        # ).transpose(1, 2)
-        # abs_pos_bias_concat = torch.matmul(pos_q, pos_k.transpose(2, 3))
-
 
         pos_q = self.pos_q_linear(pos_embed).view(
             x.size(1), x.size(0), self.num_attention_heads, -1
@@ -805,45 +780,24 @@ class TransformerEncoder(FairseqEncoder):
             encoder_states_img.append(image_x)
 
         # encoder layers
-        txt_layer = 0
-        img_layer = 0
-        w = None
         for idx, layer in enumerate(self.layers):
             self_attn_bias = abs_pos_bias.clone()
             self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
-            # if patch_images_2 is not None:
-            #     self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
-            #         self.get_image_rel_pos_bias(image_position_ids_2, idx)
-            #     self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
-            #         self.get_image_rel_pos_bias(image_position_ids, idx)
-            # elif patch_images is not None:
-            #     image_abs_pos_bias += \
-            #         self.get_image_rel_pos_bias(image_position_ids, idx)
             self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
-            # w = x.mean(dim=0).squeeze(0)
-            # w = self.txt_f1(w)
-            # w = F.gumbel_softmax(w, hard=True)
-            # if w[1] == 1:
-            #     txt_layer += 1
-            # else:
-            #     break
-            # image_abs_pos_bias = image_abs_pos_bias.reshape(-1, image_x.size(0), image_x.size(0)
+            
             x = layer(
                 x, encoder_padding_mask=encoder_padding_mask if has_pads else None, self_attn_bias=self_attn_bias, w=w
             )
-            
-            # x_imitate = self.txt_imitate(x)
-            x_imitate = x
-            similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 1:
-                break
+            if not is_train:
+                similarity = torch.cosine_similarity(F.normalize(x.clone().contiguous().view(1, -1)), F.normalize(encoder_states[-1].clone().contiguous().view(1, -1)) )
+                if similarity > thres[0]:
+                    break
             if return_all_hiddens:
                 assert encoder_states is not None
                 encoder_states.append(x)
         idx_y = idx
         for idx, layer in enumerate(self.layers):
             self_attn_bias = image_abs_pos_bias.clone()
-            # self_attn_bias += self.get_rel_pos_bias(src_tokens, idx)
             if patch_images_2 is not None:
                 self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
                     self.get_image_rel_pos_bias(image_position_ids_2, idx)
@@ -852,42 +806,20 @@ class TransformerEncoder(FairseqEncoder):
             elif patch_images is not None:
                 self_attn_bias += \
                     self.get_image_rel_pos_bias(image_position_ids, idx)
-            # self_attn_bias = self_attn_bias.reshape(-1, x.size(0), x.size(0))
             self_attn_bias = image_abs_pos_bias.reshape(-1, image_x.size(0), image_x.size(0))
-            # w = image_x.mean(dim=0).squeeze(0)
-            # w = self.img_f1(w)
-            # w = F.gumbel_softmax(w, hard=True)
-            # if w[1] == 1:
-            #     img_layer += 1
-            # else:
-            #     break
+            
             image_x = layer(
                 image_x, encoder_padding_mask=image_padding_mask if has_pads else None, self_attn_bias=self_attn_bias, w=w
             )
-            # image_x_imitate = self.image_imitate(image_x)
-            image_x_imitate = image_x
-            similarity = torch.cosine_similarity(F.normalize(image_x_imitate.clone().contiguous().view(1, -1)), F.normalize(encoder_states_img[-1].clone().contiguous().view(1, -1)) )
-            if similarity > 0.9:
-                break
+            if is_train:
+                similarity = torch.cosine_similarity(F.normalize(image_x.clone().contiguous().view(1, -1)), F.normalize(encoder_states_img[-1].clone().contiguous().view(1, -1)) )
+                if similarity > thres[1]:
+                    break
             if return_all_hiddens:
                 assert encoder_states_img is not None
                 encoder_states_img.append(image_x)
         
         x = torch.cat([image_x, x])
-        # idx = 5
-        # self_attn_bias = abs_pos_bias_concat.clone()
-        # self_attn_bias[:,:,-src_tokens.size(1):, -src_tokens.size(1):] += self.get_rel_pos_bias(src_tokens, idx)
-        # if patch_images_2 is not None:
-        #     self_attn_bias[:, :, :image_num_patches_2, :image_num_patches_2] += \
-        #         self.get_image_rel_pos_bias(image_position_ids_2, idx)
-        #     self_attn_bias[:, :, image_num_patches_2:image_num_patches_2+image_num_patches, image_num_patches_2:image_num_patches_2+image_num_patches] += \
-        #         self.get_image_rel_pos_bias(image_position_ids, idx)
-        # elif patch_images is not None:
-        #     image_abs_pos_bias[:,:, :x.size(0)- src_tokens.size(1), :x.size(0)-src_tokens.size(1)] += \
-        #         self.get_image_rel_pos_bias(image_position_ids, idx)
-        # self_attn_bias = self_attn_bias.reshape(-1, self_attn_bias.size(2), self_attn_bias.size(2))
-           
-        # x = self.layers[-1](x, encoder_padding_mask=encoder_padding_mask_cat if has_pads else None, self_attn_bias=self_attn_bias, w=w)
         
         if self.layer_norm is not None:
             x = self.layer_norm(x)
@@ -1018,7 +950,7 @@ class TransformerEncoder(FairseqEncoder):
         return state_dict
 
 
-class TransformerDecoder(FairseqIncrementalDecoder):
+class TransformerDecoder_MuE(FairseqIncrementalDecoder):
     """
     Transformer decoder consisting of *args.decoder_layers* layers. Each layer
     is a :class:`TransformerDecoderLayer`.
@@ -1060,7 +992,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         self.max_target_positions = args.max_target_positions
 
         self.embed_tokens = embed_tokens
-        self.imitate_layer = ImitationNet(embed_dim)
 
         self.embed_scale = 1.0 if args.no_scale_embedding else math.sqrt(embed_dim)
 
@@ -1241,6 +1172,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
     def forward(
         self,
         prev_output_tokens,
+        is_train: bool = True,
+        thres: float = 1,
         code_masks: Optional[torch.Tensor] = None,
         encoder_out: Optional[Dict[str, List[Tensor]]] = None,
         incremental_state: Optional[Dict[str, Dict[str, Optional[Tensor]]]] = None,
@@ -1250,7 +1183,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         alignment_heads: Optional[int] = None,
         src_lengths: Optional[Any] = None,
         return_all_hiddens: bool = False,
-        skip=1
     ):
         """
         Args:
@@ -1279,7 +1211,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             full_context_alignment=full_context_alignment,
             alignment_layer=alignment_layer,
             alignment_heads=alignment_heads,
-            skip=skip
+            is_train=is_train,
+            thres=thres
         )
 
         if not features_only:
@@ -1291,11 +1224,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         prev_output_tokens,
         code_masks: Optional[torch.Tensor],
         encoder_out: Optional[Dict[str, List[Tensor]]],
+        is_train: bool = True,
+        thres: float = 1,
         incremental_state: Optional[Dict[str, Dict[str, Optional[Tensor]]]] = None,
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
-        skip=1
     ):
         return self.extract_features_scriptable(
             prev_output_tokens,
@@ -1305,7 +1239,8 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             full_context_alignment,
             alignment_layer,
             alignment_heads,
-            skip=skip
+            is_train=is_train,
+            thres=thres
         )
 
     """
@@ -1319,11 +1254,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         prev_output_tokens,
         code_masks: Optional[torch.Tensor],
         encoder_out: Optional[Dict[str, List[Tensor]]],
+        is_train: bool = True,
+        thres: float = 1.0,
         incremental_state: Optional[Dict[str, Dict[str, Optional[Tensor]]]] = None,
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
-        skip=1,
     ):
         """
         Similar to *forward* but only return features.
@@ -1449,24 +1385,18 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 self_attn_bias=self_attn_bias,
                 cross_attn_bias=cross_abs_pos_bias
             )
-            # x_imitate = self.imitate_layer(x)
-            x_imitate = x
-            similarity = torch.cosine_similarity(F.normalize(x_imitate.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)) )
-            # out = self.output_layer(self.layer_norm(x).transpose(0, 1))
-            # out = self.get_normalized_probs([out], log_probs=True)
-            # similarity = torch.max(out.view(-1))
-            if similarity>1:       
-            #     # for i in range(idx + 1, len(self.layers)):
-            #     #     incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
-            #     #     incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
-                break
+            if not is_train:
+                similarity = torch.cosine_similarity(F.normalize(x.clone().contiguous().view(1, -1)), F.normalize(inner_states[-1].clone().contiguous().view(1, -1)))
+                if similarity > thres:       
+                    for i in range(idx + 1, len(self.layers)):
+                        incremental_state = self.layers[i].self_attn._set_input_buffer(incremental_state, saved_states[0])
+                        incremental_state = self.layers[i].encoder_attn._set_input_buffer(incremental_state, saved_states[1])
+                    break
             inner_states.append(x)
             inner_out_states.append(self.output_layer(self.layer_norm(x).transpose(0, 1)))
             if layer_attn is not None and idx == alignment_layer:
                 attn = layer_attn.float().to(x)
             
-            
-        # x = x_imitate
         if attn is not None:
             if alignment_heads is not None:
                 attn = attn[:alignment_heads]
